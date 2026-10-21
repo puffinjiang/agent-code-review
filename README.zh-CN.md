@@ -1,0 +1,191 @@
+# Agent Code Review (ACR) - 多 Agent 代码审查框架
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Node: >=20](https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen.svg)](package.json)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue.svg)](tsconfig.json)
+[![Architecture: Global First](https://img.shields.io/badge/Architecture-Global%20First-success.svg)](#-全局优先global-first安装)
+
+> **专为 AI Coding Agent 设计的开源多 Agent 代码审查框架。提供专业审查提示词、独立验证流程和安装工具。**
+
+[English Documentation](./README.md)
+
+---
+
+## 💡 为什么需要 Agent Code Review？
+
+单次审查可能遗漏调用链中的防护，或将惯用代码模式误判为缺陷。本项目要求独立 verifier 寻找反证；目前尚未测量误报率改善幅度。重点关注：
+1. **大量虚假误报（False Positives）**：模型往往将架构外层（如中间件、网关或装饰器）已经兜底拦截的场景误判为高危缺陷。
+2. **无关细节噪音（Nitpicking）**：倾向于挑剔变量命名、缩进风格或无实质风险的代码写法，却遗漏深层次的并发竞态（Race Condition）和越权（IDOR）隐患。
+
+**Agent Code Review** 借鉴了 [Anthropic 官方代码审查工程实践](https://claude.dev/blog/solving-code-review-at-anthropic/) 的核心理念，构建了多 Agent 分工协同与对抗式验证架构：由多位独立专业 Reviewer 审查 Git Diff，聚合候选缺陷，并交由 **独立的 Findings Verifier（对抗式反向验证者）** 深入代码调用链寻找反证，只有经受住反向挑战的问题才会被确认为真正缺陷。
+
+---
+
+## 🌍 全局优先（Global First）安装
+
+Agent Code Review 采用 **Global First（全局优先）** 的现代化安装架构。用户只需执行一次安装，配置即写入当前用户的全局 Agent 目录，**机器上的任意项目均可直接调用 Code Review 工作流，绝不要求每个 Git 仓库重复配置或安装 npm 依赖**。
+
+```bash
+# 推荐：全局安装（自动识别已安装平台：Antigravity、Claude Code、Codex）
+npx agent-code-review@latest init
+
+# 显式指定平台进行全局安装
+npx agent-code-review@latest init --global --platform antigravity
+npx agent-code-review@latest init --global --platform claude-code
+npx agent-code-review@latest init --global --platform codex
+npx agent-code-review@latest init --global --platform all
+
+# 可选：仅为当前项目安装（项目级隔离）
+npx agent-code-review@latest init --local
+
+# 预览安装计划（Dry Run，不改动任何文件）
+npx agent-code-review@latest init --dry-run
+
+# 环境诊断检查（同时扫描全局与本地配置）
+npx agent-code-review@latest doctor
+
+# 安全卸载（仅安全清理未被用户修改的管理文件）
+npx agent-code-review@latest uninstall
+npx agent-code-review@latest uninstall --local
+```
+
+### 各平台安装路径规范
+
+| 平台 | 全局安装路径（`--global`，默认） | 项目级安装路径（`--local`） |
+| :--- | :--- | :--- |
+| **Google Antigravity** | `~/.gemini/config/skills/code-review/SKILL.md`<br>`~/.gemini/config/agents/<reviewer>/agent.md` | `.agents/skills/code-review/SKILL.md`<br>`.agents/agents/<reviewer>/agent.md` |
+| **Claude Code** | `~/.claude/skills/code-review/SKILL.md`<br>`~/.claude/agents/<reviewer>.md` | `.claude/skills/code-review/SKILL.md`<br>`.claude/agents/<reviewer>.md` |
+| **OpenAI Codex** | `~/.agents/skills/code-review/SKILL.md`<br>`~/.codex/config.toml`（自动备份并安全合并） | `.agents/skills/code-review/SKILL.md`<br>`.codex/config.toml` |
+
+### 安装安全保障
+- **用户权限安全**：使用 Node.js `os.homedir()`，绝不要求 `sudo` 提权。
+- **清单与哈希管理**：维护 `.agent-code-review.json` 清单，精准记录受管文件路径与 SHA-256 哈希。
+- **共享配置保护**：解析验证合并后的 TOML，备份现有配置，并在私有权限的清单中记录原始内容。卸载仅在文件未被修改时恢复原始内容；已修改的共享配置及缺少恢复信息的旧版配置始终保留，即使使用 `--force`。
+- **保护用户资产**：重装或更新不会默认覆盖用户修改；受管路径禁止目录穿越和符号链接。普通文件只有显式 `--force` 才允许覆盖用户编辑。
+- **优先级告警**：`doctor` 会自动检测本地项目配置是否遮蔽了全局配置并给出清晰提醒。
+
+---
+
+## 实际运行边界与验证状态
+
+CLI 负责安装模板、检查文件完整性和解析 Git 范围；审查由宿主 Agent 执行 skill 和原生子代理调度。本包不会自动调用 LLM。导出的 TypeScript 聚合器、验证辅助函数和报告器属于可选数据工具，安装后的 skill 不会自动调用它们。`IndependentVerifier` 只记录外部提供的验证事实，不读取代码或自行证明缺陷；无法独立调度时必须明确披露。
+
+Codex 模板使用 `developer_instructions` 和 `config_file`；Claude 模板包含必需的 YAML 元数据。平台 `verified` 标记保持 false，直到补充原生运行验证记录。
+
+## 🏛️ 核心架构与工作流
+
+```text
+/code-review [范围]
+       │
+       ▼
+ 1. Git Scope Resolver（解析未提交、暂存区、指定 Commit、分支范围，主动纳入新增未跟踪文件）
+       │
+       ▼
+ 2. 风险评估与模式选择（Quick / Standard / Deep 模式）
+       │
+       ▼
+ 3. 独立专业 Reviewer
+       ├── Correctness Reviewer（业务逻辑、边界条件、状态机、软删除等）
+       ├── Security Reviewer（认证、鉴权、IDOR 越权、SQL 注入、SSRF 等）
+       ├── Concurrency Reviewer（竞态条件、TOCTOU、幂等性、重复消息处理等）
+       └── Performance Reviewer（N+1 查询、缺失索引、阻塞 I/O 等）
+       │
+       ▼
+ 4. Findings Aggregator（按根因聚类、合并多角度证据、提炼最高严重度）
+       │
+       ▼
+ 5. Independent Findings Verifier（独立对抗验证：追踪真实代码链、寻找现有防护反证、剔除误报）
+       │
+       ▼
+ 6. 严重程度分级（基于真实爆炸半径评定 P0–P3）
+       │
+       ▼
+ 7. 最终结构化报告（明确区分已确认缺陷、待验证风险、已过滤误报）
+```
+
+---
+
+## 💻 使用方法
+
+全局安装完成后，在**任何** Git 项目中打开你的 Agent 会话即可执行：
+
+```bash
+# 审查当前工作区变更（自动包含未暂存修改与新增源码文件）
+/code-review
+
+# 审查暂存区变更
+/code-review staged
+
+# 审查指定提交
+/code-review HEAD~1
+
+# 审查特性分支相对于主分支的变更
+/code-review origin/main...HEAD
+
+# 快速审查（适合小改动或临时修复）
+/code-review --mode quick
+
+# 深度审查（高风险业务、全量 Reviewer 介入）
+/code-review --mode deep
+```
+
+---
+
+## 🔍 审查模式说明
+
+- **Quick Review（快速模式）**：调度 `correctness-reviewer`，对明显回归、空值或接口破损进行快速扫描。
+- **Standard Review（标准模式，默认）**：调度 `correctness-reviewer`、`security-reviewer` 与 `concurrency-reviewer`，汇总并去重缺陷，交由 Verifier 深度核验。
+- **Deep Review（深度模式）**：全量调度包括 `performance-reviewer` 在内的所有专业审查员，要求追踪调用链并执行独立对抗验证。
+
+---
+
+## 🛡️ 严重级别定义
+
+- **P0**：灾难性安全漏洞（如无鉴权的任意 SQL 注入、远程命令执行）或系统性数据破坏。
+- **P1**：高危生产故障（如 IDOR 跨租户越权查询、高并发任务重复领取与双花、软删除数据泄露）。
+- **P2**：直接影响业务正确性或可用性的普通功能缺陷。
+- **P3**：轻微缺陷或局部可优化问题。
+
+*纯代码格式、缩进或个人偏好风格严格不在 Bug 报告中呈现。*
+
+---
+
+## 🔒 默认只读安全原则
+
+审查过程遵循严格的**只读约束**：
+- 绝对不擅自修改被审查项目的业务代码。
+- 绝对不执行 `git commit`、`git push` 或 `git reset`。
+- 绝对不执行数据库迁移或环境变更。
+- 所有发现以清晰结构化报告形式呈现，由开发者拥有最终修复决策权。
+
+---
+
+## 🧪 测试与质量保证
+
+```bash
+npm test
+npm run build
+npm pack --dry-run
+```
+
+包含测试覆盖：
+1. Global First 安装生命周期、跨平台路径与主目录隔离。
+2. 共享配置文件（TOML）安全合并与备份逻辑。
+3. Git Diff 范围解析（未提交变更、暂存区、提交范围、Merge Commit 处理、未跟踪新增文件与空 Diff 场景）。
+4. Findings 去重与多来源证据合并算法。
+5. 外部验证结果判定辅助函数（CONFIRMED / REJECTED / NEEDS_VERIFICATION）。
+6. 命令注入、符号链接、路径穿越、配置保护、保守验证与不同根因保留的回归测试。
+
+缺陷 fixture 和手写 finding 测试不代表模型检出能力。三个平台的原生 agent 发现、端到端调度、检出率和误报率仍待验证，见[评估流程](docs/reviewer-evaluation.md)。
+
+---
+
+## ⚖️ 声誉与版权声明
+
+本项目系独立开源项目，设计思路借鉴了 [Anthropic 公开发表的代码审查工程博客](https://claude.dev/blog/solving-code-review-at-anthropic/)。本项目与 Anthropic、Google 或 OpenAI 无官方隶属、合作或商业授权关系。
+
+---
+
+## 📄 开源许可证
+
+[MIT License](LICENSE) © 2026 Puffin

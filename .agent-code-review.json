@@ -1,0 +1,48 @@
+{
+  "schemaVersion": "1.0.0",
+  "packageVersion": "0.1.0",
+  "scope": "local",
+  "platforms": [
+    "antigravity"
+  ],
+  "installedAt": "2026-10-21T15:23:18.822Z",
+  "updatedAt": "2026-10-21T16:09:36.963Z",
+  "files": [
+    {
+      "path": ".agents/agents/concurrency-reviewer/agent.md",
+      "hash": "b009cedb41e6f1af275b7ac186ca9817488a42381d1e928e0468d99038ed30e4",
+      "platform": "antigravity",
+      "installedAt": "2026-10-21T16:09:36.963Z"
+    },
+    {
+      "path": ".agents/agents/correctness-reviewer/agent.md",
+      "hash": "9bb34150805bad70db0c3291e8aae10e792a1f8f916fe7876e3fbca62d74e0e6",
+      "platform": "antigravity",
+      "installedAt": "2026-10-21T16:09:36.963Z"
+    },
+    {
+      "path": ".agents/agents/findings-verifier/agent.md",
+      "hash": "2e92362d99fd45e6356962cb266c63e6a77b2bac62695d57ddc8b814f4efd3d3",
+      "platform": "antigravity",
+      "installedAt": "2026-10-21T16:09:36.963Z"
+    },
+    {
+      "path": ".agents/agents/performance-reviewer/agent.md",
+      "hash": "70bdacd06bd2f327f1d0e4423adee9dae1d1957f5c7264e1a4321f14ebd28e9a",
+      "platform": "antigravity",
+      "installedAt": "2026-10-21T16:09:36.963Z"
+    },
+    {
+      "path": ".agents/agents/security-reviewer/agent.md",
+      "hash": "baaaf45c81a2fba0155e33bbc09a3d1bec1c91a5af451d82e83f528421109925",
+      "platform": "antigravity",
+      "installedAt": "2026-10-21T16:09:36.963Z"
+    },
+    {
+      "path": ".agents/skills/code-review/SKILL.md",
+      "hash": "9d3274432487d4f4d1540f6a8453cd9f3bdd48432764d78efa19b72975ef4582",
+      "platform": "antigravity",
+      "installedAt": "2026-10-21T16:09:36.963Z"
+    }
+  ]
+}
