@@ -427,28 +427,22 @@ agent-code-review/
 │       ├── manifest.ts              # .agent-code-review.json 清单与 SHA-256 哈希管理
 │       └── uninstaller.ts           # 卸载引擎 (白名单校验、无残留私有目录清理)
 │
-├── core/                            # 核心业务逻辑 (平台无关)
-│   ├── aggregator/
-│   │   └── aggregator.ts            # 候选缺陷聚合与合并逻辑
-│   ├── git/
-│   │   └── scope.ts                 # Git 变更范围解析 (含未跟踪新增源码文件)
-│   ├── policies/
-│   │   └── modes.ts                 # 评审模式策略定义 (Quick / Standard / Deep)
-│   ├── reporter/
-│   │   └── reporter.ts              # 终版评审报告生成器 (Markdown)
-│   ├── schemas/
-│   │   └── findings.ts              # Finding、ReviewContext 等数据模型规范
-│   └── verifier/
-│       └── verifier.ts              # 独立对抗式验证数据记录辅助工具
+├── core/                            # 平台无关的核心逻辑（仅 CLI 实际调用者）
+│   └── git/
+│       └── scope.ts                 # Git 变更范围解析 (含未跟踪新增源码文件)
 │
 ├── scripts/
 │   ├── generate-agents.mjs          # 构建期自动生成本地 .agents/ 产物
 │   └── verify-assets.mjs            # prepack 资产与渲染规范校验卡点
 │
 └── tests/
+    └── helpers/
+        └── findings.ts              # Finding 数据契约与 schema 校验（仅测试使用）
 ```
 
 核心内容遵循唯一事实来源（SSOT）原则：Markdown 提示词正文与核心 Skill 集中定义在 `assets/` 中，各 Adapter 仅负责元数据声明并通过动态渲染引擎包装，严禁在适配器间手工复制维护多份静态正文。
+
+**评审协议不在代码中二次实现。** 评审的聚合、验证、报告与模式选择规则由 LLM 依据 `assets/` 中的自然语言指令执行；代码侧**不得**再维护一份平行的 TypeScript 实现——那会产生两套规则、两处真相，且因不参与运行时而无从同步。相应的规则保障一律通过**直接断言 `assets/` 产物**来实现（见 `tests/template-contracts.test.ts`），使测试守护的是真正发布给用户的内容，而非同仓库的影子副本。
 
 ## 十一、CLI 开发、npm 发布与安装管理
 

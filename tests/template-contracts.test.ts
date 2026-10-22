@@ -3,8 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import { parse } from "smol-toml";
-import { validateFinding } from "../core/schemas/findings.js";
-import { resolveReviewPolicy } from "../core/policies/modes.js";
+import { validateFinding } from "./helpers/findings.js";
 import { getAdapter } from "../adapters/index.js";
 import { resolveAssetsRoot, loadCanonicalPrompt, loadCanonicalSkill } from "../adapters/assets-root.js";
 
@@ -82,11 +81,50 @@ describe("Installable reviewer contracts (SSOT dynamic rendering)", () => {
     }
   );
 
-  it("includes concurrency for standard review regardless of language extension", () => {
-    for (const file of ["component.tsx", "service.cs", "Worker.kt", "queue.php", "config.yaml"]) {
-      expect(resolveReviewPolicy("standard", [file]).reviewers.map((reviewer) => reviewer.name)).toContain(
-        "concurrency-reviewer"
-      );
+  // 直接断言将要发布到用户主机的产物，而非某个平行实现。
+  // 评审规则的事实来源是 assets/skills/code-review.md；规则本身必须按语言无关的方式覆盖。
+  it("requires concurrency in standard mode regardless of language extension", () => {
+    for (const platform of ["antigravity", "claude-code", "codex"] as const) {
+      const files = getAdapter(platform).getTemplateFiles({ isGlobal: true });
+      const skill = files.find((f) => f.relativePath.endsWith("skills/code-review/SKILL.md"))!.sourceContent;
+
+      // 标准模式必须包含 correctness / security / concurrency 三者，与文件扩展名无关
+      expect(skill, `${platform} 标准模式应包含 concurrency-reviewer`).toContain("concurrency-reviewer");
+      expect(skill).toMatch(/Standard:[^\n]*correctness-reviewer[^\n]*security-reviewer[^\n]*concurrency-reviewer/);
+      // 不允许按语言扩展名做条件筛选
+      expect(skill, `${platform} 不应按文件扩展名条件选择 reviewer`).not.toMatch(/only for \.(ts|tsx|py|go)\b/i);
+    }
+  });
+
+  it("requires aggregation rules that keep distinct causes separate", () => {
+    for (const platform of ["antigravity", "claude-code", "codex"] as const) {
+      const files = getAdapter(platform).getTemplateFiles({ isGlobal: true });
+      const skill = files.find((f) => f.relativePath.endsWith("skills/code-review/SKILL.md"))!.sourceContent;
+
+      expect(skill, `${platform} 应要求按 root cause + trigger 合并`).toMatch(/[Mm]erge only when the root cause and trigger/);
+      expect(skill).toMatch(/Retain different triggers and file locations separately/);
+      expect(skill).toMatch(/highest supported severity/);
+    }
+  });
+
+  it("requires adversarial verification without silently discarding candidates", () => {
+    for (const platform of ["antigravity", "claude-code", "codex"] as const) {
+      const files = getAdapter(platform).getTemplateFiles({ isGlobal: true });
+      const skill = files.find((f) => f.relativePath.endsWith("skills/code-review/SKILL.md"))!.sourceContent;
+
+      expect(skill, `${platform} 应要求独立 verifier 溯源与搜索防护机制`).toMatch(/Require an independent source trace and a search for guards/);
+      expect(skill, `${platform} 严禁静默丢弃 verifier 未能处理的候选缺陷`).toMatch(/Do not silently discard candidates that the verifier could not process/);
+    }
+  });
+
+  it("requires honest reporting with confirmed/needs_verification/rejected and P0-P3 breakdown", () => {
+    for (const platform of ["antigravity", "claude-code", "codex"] as const) {
+      const files = getAdapter(platform).getTemplateFiles({ isGlobal: true });
+      const skill = files.find((f) => f.relativePath.endsWith("skills/code-review/SKILL.md"))!.sourceContent;
+
+      expect(skill, `${platform} 应要求如实报告模式、范围、时间戳与文件数`).toMatch(/Report mode, scope, timestamp, reviewed file count/);
+      expect(skill, `${platform} 应要求输出 P0-P3 严重级别分布`).toContain("confirmed counts with P0-P3 breakdown");
+      expect(skill, `${platform} 应区分待验证与已驳回项`).toContain("pending verification count, and rejected count");
     }
   });
 

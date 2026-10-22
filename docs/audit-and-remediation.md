@@ -16,6 +16,7 @@
 | v5 | 2026-10-22 | 落地选项 B（方案 F.1 ~ F.3 模板正文 SSOT 重构）：建立 `assets/prompts` 与 `assets/skills` 唯一事实来源；删除 `templates/` 下 18 个冗余文件（消除 100% 文本重复）；实现 `adapters/render.ts` 与 `adapters/types.ts`（彻底解决 R-01, R-02, R-03, R-05）；全量测试提升至 95 passed / 3 skipped |
 | v6 | 2026-10-22 | 代码库深度清理：删除无用死代码 `adapters/templates-root.ts`；清除三平台 adapter 中不可达的 `files.length === 0` 守卫；根目录 `.agents/` 从 Git 索引中剔除并加入 `.gitignore`（R-03 完全闭环）；修复 `npm run verify-assets` 独立运行链；清理全项目无用 import 与变量（`tsc --noUnusedLocals` 全绿） |
 | v7 | 2026-10-22 | 落地方案 E（PRD 措辞全面修订与承诺闭环）：修订 `docs/prd.md` 严格界定 `--force` 权限边界（区分宿主配置零侵入与受管路径显式接管）、补齐各平台真实触发前缀语法（D-10）、补全 `src/` 与 `adapters/` 完整架构树并纠正 CLI 事实（commander）；纠正 §11.4 序号冲突；在 `src/lib/doctor.ts` 增加平台 verified 状态诊断输出并在中英文 README 中精确对齐验证矩阵口径（Codex Skill 发现已实测，子代理与质量待测）；全量测试 96 passed / 3 skipped 全绿 |
+| v8 | 2026-10-22 | 落地 R-04 影子实现清理：移除 `core/` 5 个未用模块（538 行）与自循环测试，规则收敛至 `assets/`；建立产物级断言守护端到端交付文件；打包体积缩减 93%（`dist/index.js` 1.0 KB），测试集收敛至 83 passed / 3 skipped 全绿 |
 
 > 本文档为整改执行的**单一依据**。伴随文档保留原文，其独立视角与组织结构仍有参考价值。
 > 本文档在验证过程中**修正了本人 v1 的一处误判**（详见 §8 勘误表），并**修正了伴随文档的一处误判**。
@@ -722,9 +723,10 @@ expect(total).toBeGreaterThan(0);
 | **F.4** 统一资源加载与 Fail-Fast（选项 A） | D-09 | ✅ 已实施（多候选寻址 + 缺失显式抛错 + 空文件集拦截 + prepack 校验） |
 | **F.1 ~ F.3** 模板正文 SSOT 重构（选项 B） | R-01 / R-02 / R-03 / R-05 | ✅ 已实施（Canonical 资产源头 + 动态渲染引擎 + 删除 templates/ 18 个冗余静态副本 + 根目录 .agents/ 构建自动生成） |
 | **E** PRD 措辞修订 | D-05 | ✅ 已实施（锁定宿主零侵入安全底线、各平台触发语法、SSOT 架构及未经验证声明） |
+| **R-04 影子实现清理** | R-04 | ✅ 已实施（删除 core/ 5 个未用模块与自循环测试，规则收敛至 assets/ 并建立产物级断言） |
 | —（审查后追加）按平台输出调用前缀 | **D-10** | ✅ 已实施 |
 
-**测试结果：36 failed / 40 passed（76）→ 0 failed / 95 passed / 3 skipped（98）**
+**测试结果：36 failed / 40 passed（76）→ 0 failed / 83 passed / 3 skipped（86）**
 
 3 项跳过为 Windows 平台限制（符号链接需开发者模式、文件名不可含换行与尾随空格），非产品缺陷。
 
@@ -789,8 +791,36 @@ expect(total).toBeGreaterThan(0);
 | `loads canonical skill successfully` | R-02 / F.1 |
 | `Adapter dynamic rendering contracts for %s (TOML parseable, Claude tools, uncertainty rules)` | F.1 / F.2 |
 
-### 9.4 未实施
+### 9.4 已完成的其余方案
 
 | 方案 | 状态 |
 |---|---|
-| **R-04 `core/` 538 行定位** | 待产品决策（确定保留为面向开发者的外向 SDK 工具库，还是精简为纯 Prompt 驱动） |
+| **E** PRD 措辞修订 | ✅ 含 §11.4 编号重排、CLI 框架更正、`verified` 上 CLI 与中英文矩阵 |
+| **F** 资产归一 SSOT 重构 | ✅ 含 F.4 Fail-Fast 资源定位与 prepack 资产卡点 |
+
+### 9.5 R-04 结论：影子实现已移除（2026-10-22）
+
+依赖闭包追踪确认：`src/cli.ts` 可达的 `core/` 模块**只有 `core/git/scope.ts`**。其余 5 个模块（538 行）不在 CLI 路径上，仅经 `src/index.ts` 再导出进入 `dist/index.js`，而该包**从未发布**（`npm view` 返回 404），无外部消费者。
+
+更关键的是它们的规则在 `assets/` 中已存在平行表述，且**原有测试全为自我循环**——用手写 Finding 测 TS 函数，改 `assets/` 不会让任何测试变红。
+
+| 模块 | 行数 | 处置 |
+|---|---|---|
+| `core/policies/modes.ts` | 86 | 删除，测试改为直接断言渲染后的 SKILL.md |
+| `core/aggregator/aggregator.ts` | 63 | 删除，同上 |
+| `core/reporter/reporter.ts` | 149 | 删除，同上 |
+| `core/verifier/verifier.ts` | 113 | 删除，同上 |
+| `core/schemas/findings.ts` | 127 | 迁至 `tests/helpers/findings.ts`（`validateFinding` 用于校验 agent.md 内嵌的 JSON 示例） |
+
+同时删除 `tests/review-core.test.ts`（9 例）、`tests/fixtures.test.ts`（4 例）及孤立的 `tests/fixtures/deliberate-bugs.ts`。
+
+**新增的产物级断言**（替代被删的自检式用例）：
+
+- `requires concurrency in standard mode regardless of language extension` —— 断言三个平台渲染出的 SKILL.md 均满足 `Standard:` 含三个 reviewer，且不含按文件扩展名条件筛选的表述
+- `requires aggregation rules that keep distinct causes separate` —— 断言 SKILL.md 含按 root cause + trigger 合并、保留不同 trigger/位置、取最高支持 severity 的规则
+- `requires adversarial verification without silently discarding candidates` —— 断言 SKILL.md 含独立 verifier 溯源与搜索防护机制要求，且严禁静默丢弃候选缺陷
+- `requires honest reporting with confirmed/needs_verification/rejected and P0-P3 breakdown` —— 断言 SKILL.md 含如实报告模式、范围、时间戳、文件数、P0~P3 严重级别分布与未验证披露要求
+
+**变异测试验证**：从 `assets/skills/code-review.md` 删除 `Standard:` 中的 `concurrency-reviewer` 后，新断言立即失败；还原后恢复通过。证明断言守护的是真正发布给用户的内容，而非同仓库的影子副本。
+
+**结果**：`dist/index.js` 15725 B → **1030 B**（-93%）；测试 96 → **83**（减少 13 例影子实现的自检，新增 4 例核心产物级守护断言，4 例 schema 边界用例收敛至 `findings.test.ts`）。`install` / `scope` / `uninstall` 端到端复测通过，用户 `config.toml` 字节级未变。

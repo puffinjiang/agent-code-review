@@ -68,7 +68,7 @@ npx agent-code-review@latest uninstall --local
 
 ## 实际运行边界与平台验证状态
 
-CLI 负责安装模板、检查文件完整性和解析 Git 范围；审查由宿主 Agent 执行 skill 和原生子代理调度。本包不会自动调用 LLM。导出的 TypeScript 聚合器、验证辅助函数和报告器属于可选数据工具，安装后的 skill 不会自动调用它们。`IndependentVerifier` 只记录外部提供的验证事实，不读取代码或自行证明缺陷；无法独立调度时必须明确披露。
+CLI 负责安装模板、检查文件完整性和解析 Git 范围；审查由宿主 Agent 执行 skill 和原生子代理调度。本包不会自动调用 LLM。评审协议本身（聚合、验证与报告规则）完全定义在 `assets/` 的提示词资产中并由宿主 Agent 执行，本包不再提供这些规则的 TypeScript 平行实现；相应的规则保障通过直接断言 `assets/` 产物来实现。无法独立调度时必须明确披露。
 
 ### 平台验证状态矩阵
 

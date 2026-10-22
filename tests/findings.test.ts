@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { validateFinding, Finding } from "../core/schemas/findings.js";
+import { validateFinding, Finding } from "./helpers/findings.js";
 
 describe("Findings Schema Validation", () => {
   const validFinding: Finding = {
@@ -49,5 +49,14 @@ describe("Findings Schema Validation", () => {
     const result = validateFinding(invalid);
     expect(result.valid).toBe(false);
     expect(result.errors.some((e) => e.includes("end_line"))).toBe(true);
+  });
+
+  it.each([
+    { evidence: [42] },
+    { start_line: NaN },
+    { end_line: Infinity },
+    { verification: { method: "invented", tests_executed: false } }
+  ])("should reject invalid protocol data: %j", (invalid) => {
+    expect(validateFinding({ ...validFinding, ...invalid } as any).valid).toBe(false);
   });
 });

@@ -66,7 +66,7 @@ npx agent-code-review@latest uninstall --local
 
 ## Runtime Boundaries & Platform Verification Status
 
-The CLI installs templates, diagnoses file integrity, and resolves Git scopes. The host agent executes the review skill and native delegation; the package does not automatically invoke an LLM. The exported TypeScript aggregator, verifier helper, and reporter are optional data utilities and are not automatically called by the installed skill. `IndependentVerifier` records explicit external evaluation facts; it does not inspect code or prove findings itself. If independent delegation is unavailable, the skill must disclose that limitation.
+The CLI installs templates, diagnoses file integrity, and resolves Git scopes. The host agent executes the review skill and native delegation; the package does not automatically invoke an LLM. The review protocol itself — aggregation, verification, and reporting — lives entirely in the installed prompt assets under `assets/` and is executed by the host agent; this package ships no parallel TypeScript implementation of those rules. If independent delegation is unavailable, the skill must disclose that limitation.
 
 ### Platform Verification Matrix
 

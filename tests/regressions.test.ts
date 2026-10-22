@@ -7,20 +7,8 @@ import { Installer } from "../src/lib/installer.js";
 import { Uninstaller } from "../src/lib/uninstaller.js";
 import { ManifestManager } from "../src/lib/manifest.js";
 import { GitScopeResolver } from "../core/git/scope.js";
-import { IndependentVerifier } from "../core/verifier/verifier.js";
 import { getAdapter } from "../adapters/index.js";
 import { resolveManagedPath } from "../src/lib/managed-path.js";
-import { FindingsAggregator } from "../core/aggregator/aggregator.js";
-import { ReviewReporter } from "../core/reporter/reporter.js";
-import { Finding, validateFinding } from "../core/schemas/findings.js";
-
-const finding: Finding = {
-  id: "A", title: "Candidate", severity: "P2", status: "NEEDS_VERIFICATION",
-  category: "correctness", file: "missing.ts", start_line: 10, end_line: 11,
-  trigger: "An unverified claim", impact: "An unverified consequence", evidence: ["Reviewer claim"],
-  recommendation: "Verify it", origin: "pre-existing-unrelated",
-  verification: { method: "static-analysis", tests_executed: false }, root_cause_key: "operation:claim"
-};
 
 /**
  * Windows 创建符号链接需要开发者模式或管理员权限，缺失时相关用例会以 EPERM 失败。
@@ -110,25 +98,6 @@ describe("Review safety regressions", () => {
     expect(scope.isMergeCommit).toBe(true);
     expect(scope.changedFiles).toEqual(["feature.txt"]);
     expect(scope.patch).not.toContain("+main");
-  });
-
-  it("requires explicit verification facts and preserves origin", () => {
-    const [result] = IndependentVerifier.verifyBatch([finding]);
-    expect(result.status).toBe("NEEDS_VERIFICATION");
-    expect(result.origin).toBe("pre-existing-unrelated");
-    expect(result.verification.notes).not.toContain("Independently verified");
-    expect(IndependentVerifier.evaluateCandidate({ finding, concreteTriggerPossible: true }).status).toBe("NEEDS_VERIFICATION");
-    expect(IndependentVerifier.evaluateCandidate({ finding, hasExistingProtection: true }).origin).toBe(finding.origin);
-  });
-
-  it("keeps distinct nearby causes, triggers, statuses, and file locations", () => {
-    const variants: Finding[] = [finding,
-      { ...finding, id: "B", root_cause_key: "another:cause", start_line: 12, end_line: 13 },
-      { ...finding, id: "C", file: "another.ts", start_line: 500, end_line: 501 },
-      { ...finding, id: "D", trigger: "Different reachable trigger" },
-      { ...finding, id: "E", status: "REJECTED" }
-    ];
-    expect(FindingsAggregator.aggregate(variants)).toHaveLength(5);
   });
 
   it("protects edited managed files during update and allows explicit force", () => {
@@ -277,16 +246,6 @@ describe("Review safety regressions", () => {
     expect(new Installer(options).execute().success).toBe(true);
     expect(new Installer(options).execute().success).toBe(true);
     expect(new Uninstaller({ workspaceRoot: repo, scope: "local" }).execute().success).toBe(true);
-  });
-
-  it("counts confirmed severities separately from pending findings", () => {
-    const summary = ReviewReporter.buildSummary([{ ...finding, status: "CONFIRMED" }, { ...finding, id: "pending", severity: "P1" }]);
-    expect(summary.confirmed).toBe(1); expect(summary.needs_verification).toBe(1);
-    expect(summary.by_severity).toEqual({ P0: 0, P1: 0, P2: 1, P3: 0 });
-  });
-
-  it.each([{ evidence: [42] }, { start_line: NaN }, { end_line: Infinity }, { verification: { method: "invented", tests_executed: false } }])("rejects invalid protocol data %j", (invalid) => {
-    expect(validateFinding({ ...finding, ...invalid }).valid).toBe(false);
   });
 
   // ---- 跨平台路径归一化（D-01）与卸载删除边界（C.1/C.2）----
