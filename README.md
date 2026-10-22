@@ -74,7 +74,7 @@ The CLI installs templates, diagnoses file integrity, and resolves Git scopes. T
 | :--- | :--- | :--- | :--- |
 | **Google Antigravity** | Implemented (`~/.gemini/config/...`) | ⚠️ **Unverified (`false`)** (Templates & unit tests ready; runtime quality unvalidated) | `/code-review` |
 | **Claude Code** | Implemented (`~/.claude/...`) | ⚠️ **Unverified (`false`)** (YAML metadata aligned; native delegation unvalidated) | `/code-review` |
-| **OpenAI Codex** | Implemented (`~/.codex/agents/*.toml` auto-discovery) | ⚠️ **Unverified (`false`)** (TOML format aligned; auto-discovery unvalidated) | `$code-review` |
+| **OpenAI Codex** | Implemented (`~/.codex/agents/*.toml` auto-discovery) | ⚠️ **Unverified (`false`)** (Skill auto-discovery verified on CLI 0.163.0; subagent delegation & review quality unvalidated) | `$code-review` |
 
 > [!IMPORTANT]
 > The `verified` flag for all platforms is strictly set to `false` and transparently reported by `npx agent-code-review doctor`. Flags will only be set to `true` after thorough, recorded testing and review quality validation on actual native host runtimes.

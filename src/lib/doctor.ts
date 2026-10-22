@@ -54,15 +54,15 @@ export class Doctor {
     // Check 2: Platform verification status
     const platformEntries = Object.values(PLATFORMS);
     const unverifiedEntries = platformEntries.filter((p) => !p.verified);
-    const verificationSummary = platformEntries
-      .map((p) => `${p.name}: ${p.verified ? "verified" : "unverified"}`)
-      .join(", ");
+    const verificationDetails = platformEntries
+      .map((p) => `\n   - ${p.name}: ${p.verified ? "verified" : "unverified"}${p.notes ? ` (${p.notes})` : ""}`)
+      .join("");
     checks.push({
       name: "Platform Verification Status",
       status: unverifiedEntries.length > 0 ? "warn" : "pass",
-      message: unverifiedEntries.length === platformEntries.length
-        ? `All platforms are currently unverified in native runtime (review quality not validated): ${verificationSummary}.`
-        : `Platform verification: ${verificationSummary}.`
+      message: (unverifiedEntries.length === platformEntries.length
+        ? "All platforms are currently unverified in native runtime (review quality not validated):"
+        : "Platform verification:") + verificationDetails
     });
 
     // Check 3: Global Installation Manifest

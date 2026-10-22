@@ -412,7 +412,7 @@ agent-code-review/
 │       └── index.ts                 # OpenAI Codex 适配器实现 (TOML 自动发现)
 │
 ├── src/
-│   ├── cli.ts                       # CLI 入口与命令路由 (cac)
+│   ├── cli.ts                       # CLI 入口与命令路由 (commander)
 │   ├── index.ts                     # 模块导出入口
 │   ├── commands/
 │   │   ├── init.ts                  # init 命令实现 (Scope, 平台选择, 模板写入)
@@ -460,7 +460,7 @@ agent-code-review/
 
 - Runtime：Node.js 22 LTS 或更新的受支持版本
 - Language：TypeScript
-- CLI：commander 或 cac
+- CLI：commander
 - Build：tsup
 - Testing：Vitest
 - Package Manager：npm
@@ -527,14 +527,14 @@ npx agent-code-review@latest uninstall
 1. **用户宿主配置零侵入**：永不修改、追加或覆盖任何已存在的用户宿主配置文件（如 `~/.codex/config.toml`、`~/.claude/settings.json` 等），即便使用 `--force` 也绝不触碰。优先利用宿主平台的原生自动发现机制（如 `~/.codex/agents/*.toml`、`~/.gemini/config/agents/` 等），实现零侵入安装。
 2. **受管文件冲突保护与显式授权接管**：对本项目受管路径下的 agent 和 skill 文件，默认不静默覆盖未受管或已被用户修改的文件；当且仅当用户显式指定 `--force` 时，才允许覆盖并接管纳管。
 3. **卸载目录所有权保护**：不删除用户自定义文件，卸载时仅清理清单中记录的文件与本项目拥有的私有叶子目录，严格保护宿主公共目录所有权，禁止向上递归删除非工具私有的父级目录。
-3. 维护安装清单及文件哈希。
-4. 支持重复初始化且结果一致。
-5. 支持 Dry Run。
-6. 支持安全卸载。
-7. 不自动修改 Git 配置。
-8. 不执行远程安装脚本。
-9. 不要求管理员权限。
-10. 不在 npm install 生命周期中运行不必要的 postinstall 脚本。
+4. 维护安装清单及文件哈希。
+5. 支持重复初始化且结果一致。
+6. 支持 Dry Run。
+7. 支持安全卸载。
+8. 不自动修改 Git 配置。
+9. 不执行远程安装脚本。
+10. 不要求管理员权限。
+11. 不在 npm install 生命周期中运行不必要的 postinstall 脚本。
 
 ### 11.5 npm 发布
 

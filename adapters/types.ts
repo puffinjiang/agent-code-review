@@ -29,7 +29,7 @@ export const PLATFORMS: Record<"antigravity" | "codex" | "claude-code", Platform
     id: "codex",
     name: "OpenAI Codex",
     verified: false,
-    notes: "Configuration follows documented layout; native runtime discovery and review quality have not been validated."
+    notes: "Skill auto-discovery verified on Codex CLI 0.163.0 ($code-review); subagent delegation and review quality have not been validated."
   }
 };
 

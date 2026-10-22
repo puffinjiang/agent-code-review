@@ -15,7 +15,7 @@
 | v4 | 2026-10-22 | 落地方案 F.4（选项 A）：实现多候选路径 Fail-Fast 资源定位器 `adapters/templates-root.ts`，防范 D-09 静默空安装；新增 `scripts/verify-assets.mjs` 接入 `prepack` 阻断缺件打包；全量测试提升至 91 passed / 3 skipped |
 | v5 | 2026-10-22 | 落地选项 B（方案 F.1 ~ F.3 模板正文 SSOT 重构）：建立 `assets/prompts` 与 `assets/skills` 唯一事实来源；删除 `templates/` 下 18 个冗余文件（消除 100% 文本重复）；实现 `adapters/render.ts` 与 `adapters/types.ts`（彻底解决 R-01, R-02, R-03, R-05）；全量测试提升至 95 passed / 3 skipped |
 | v6 | 2026-10-22 | 代码库深度清理：删除无用死代码 `adapters/templates-root.ts`；清除三平台 adapter 中不可达的 `files.length === 0` 守卫；根目录 `.agents/` 从 Git 索引中剔除并加入 `.gitignore`（R-03 完全闭环）；修复 `npm run verify-assets` 独立运行链；清理全项目无用 import 与变量（`tsc --noUnusedLocals` 全绿） |
-| v7 | 2026-10-22 | 落地方案 E（PRD 措辞全面修订与承诺闭环）：修订 `docs/prd.md` 严格界定 `--force` 权限边界（区分宿主配置零侵入与受管路径显式接管）、补齐各平台真实触发前缀语法（D-10）、补全 `src/` 与 `adapters/` 完整架构树；在 `src/lib/doctor.ts` 增加平台 verified 状态诊断输出并在中英文 README 中如实声明验证矩阵；全量测试提升至 96 passed / 3 skipped 全绿 |
+| v7 | 2026-10-22 | 落地方案 E（PRD 措辞全面修订与承诺闭环）：修订 `docs/prd.md` 严格界定 `--force` 权限边界（区分宿主配置零侵入与受管路径显式接管）、补齐各平台真实触发前缀语法（D-10）、补全 `src/` 与 `adapters/` 完整架构树并纠正 CLI 事实（commander）；纠正 §11.4 序号冲突；在 `src/lib/doctor.ts` 增加平台 verified 状态诊断输出并在中英文 README 中精确对齐验证矩阵口径（Codex Skill 发现已实测，子代理与质量待测）；全量测试 96 passed / 3 skipped 全绿 |
 
 > 本文档为整改执行的**单一依据**。伴随文档保留原文，其独立视角与组织结构仍有参考价值。
 > 本文档在验证过程中**修正了本人 v1 的一处误判**（详见 §8 勘误表），并**修正了伴随文档的一处误判**。

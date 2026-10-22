@@ -76,7 +76,7 @@ CLI 负责安装模板、检查文件完整性和解析 Git 范围；审查由�
 | :--- | :--- | :--- | :--- |
 | **Google Antigravity** | 已实现（`~/.gemini/config/...`） | ⚠️ **未验证 (`false`)**（模板与单测已就绪，原生真实运行审查质量待实测） | `/code-review` |
 | **Claude Code** | 已实现（`~/.claude/...`） | ⚠️ **未验证 (`false`)**（YAML 格式已对齐，原生子代理调度待实测） | `/code-review` |
-| **OpenAI Codex** | 已实现（`~/.codex/agents/*.toml` 自动发现） | ⚠️ **未验证 (`false`)**（TOML 格式已对齐，零侵入自动发现待实测） | `$code-review` |
+| **OpenAI Codex** | 已实现（`~/.codex/agents/*.toml` 自动发现） | ⚠️ **未验证 (`false`)**（Skill 自动发现已在 CLI 0.163.0 实测；子代理派发与审查质量未验证） | `$code-review` |
 
 > [!IMPORTANT]
 > 当前所有平台的 `verified` 标记均显式保持为 `false`，并在 `npx agent-code-review doctor` 输出中如实展示，绝不夸大宣传。仅在通过各宿主平台真实环境长效运行验证审查质量后，才会将标记置为 `true`。

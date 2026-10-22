@@ -178,6 +178,7 @@ describe("Global First Installer Lifecycle", () => {
     expect(verificationCheck).toBeDefined();
     expect(verificationCheck?.status).toBe("warn");
     expect(verificationCheck?.message).toContain("unverified");
+    expect(verificationCheck?.message).toContain("Codex CLI 0.163.0");
     expect(report.platformVerification).toBeDefined();
     expect(report.platformVerification.antigravity.verified).toBe(false);
   });
