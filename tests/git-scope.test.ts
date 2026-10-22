@@ -3,22 +3,27 @@ import { GitScopeResolver } from "../core/git/scope.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 
 describe("Git Scope Resolver", () => {
   let tempDir: string;
+  // 以独立参数调用 git：Windows cmd.exe 不把单引号当作引号字符，
+  // 拼接成命令字符串会传错参数（见 docs/audit-and-remediation.md D-07）。
+  const git = (...args: string[]) =>
+    execFileSync("git", args, { cwd: tempDir, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "acr-git-test-"));
-    execSync("git init", { cwd: tempDir, stdio: "ignore" });
-    execSync("git config user.name 'Test User'", { cwd: tempDir, stdio: "ignore" });
-    execSync("git config user.email 'test@example.com'", { cwd: tempDir, stdio: "ignore" });
+    git("init");
+    git("config", "user.name", "Test User");
+    git("config", "user.email", "test@example.com");
 
-    execSync("git config commit.gpgsign false", { cwd: tempDir, stdio: "ignore" });
+    git("config", "commit.gpgsign", "false");
 
     // Initial commit
     fs.writeFileSync(path.join(tempDir, "base.txt"), "Initial line\n");
-    execSync("git add base.txt && git commit -m 'Initial commit'", { cwd: tempDir, stdio: "ignore" });
+    git("add", "base.txt");
+    git("commit", "-m", "Initial commit");
   });
 
   afterEach(() => {
@@ -60,7 +65,7 @@ describe("Git Scope Resolver", () => {
   it("should resolve staged changes correctly", () => {
     const resolver = new GitScopeResolver(tempDir);
     fs.writeFileSync(path.join(tempDir, "staged.txt"), "staged content");
-    execSync("git add staged.txt", { cwd: tempDir, stdio: "ignore" });
+    git("add", "staged.txt");
 
     const result = resolver.resolve({ target: "staged" });
     expect(result.isEmpty).toBe(false);
@@ -71,12 +76,10 @@ describe("Git Scope Resolver", () => {
   it("should resolve specific commit target", () => {
     const resolver = new GitScopeResolver(tempDir);
     fs.writeFileSync(path.join(tempDir, "commit-file.txt"), "v1");
-    execSync("git add commit-file.txt && git commit -m 'feat: add commit-file'", {
-      cwd: tempDir,
-      stdio: "ignore"
-    });
+    git("add", "commit-file.txt");
+    git("commit", "-m", "feat: add commit-file");
 
-    const commitSha = execSync("git rev-parse HEAD", { cwd: tempDir, encoding: "utf-8" }).trim();
+    const commitSha = git("rev-parse", "HEAD");
     const result = resolver.resolve({ target: commitSha });
 
     expect(result.isEmpty).toBe(false);
@@ -87,20 +90,22 @@ describe("Git Scope Resolver", () => {
   it("should detect merge commits", () => {
     const resolver = new GitScopeResolver(tempDir);
     // Create branch feat
-    execSync("git checkout -b feat", { cwd: tempDir, stdio: "ignore" });
+    git("checkout", "-b", "feat");
     fs.writeFileSync(path.join(tempDir, "feat.txt"), "from feat branch");
-    execSync("git add feat.txt && git commit -m 'feat: feature file'", { cwd: tempDir, stdio: "ignore" });
+    git("add", "feat.txt");
+    git("commit", "-m", "feat: feature file");
 
     // Switch back to master/main
-    const mainBranch = execSync("git branch --show-current", { cwd: tempDir, encoding: "utf-8" }).trim();
-    execSync("git checkout -", { cwd: tempDir, stdio: "ignore" });
+    const mainBranch = git("branch", "--show-current");
+    git("checkout", "-");
     fs.writeFileSync(path.join(tempDir, "main.txt"), "from main branch");
-    execSync("git add main.txt && git commit -m 'chore: main file'", { cwd: tempDir, stdio: "ignore" });
+    git("add", "main.txt");
+    git("commit", "-m", "chore: main file");
 
     // Merge feat into main with --no-ff
-    execSync("git merge --no-ff feat -m 'merge feat into main'", { cwd: tempDir, stdio: "ignore" });
+    git("merge", "--no-ff", "feat", "-m", "merge feat into main");
 
-    const mergeCommit = execSync("git rev-parse HEAD", { cwd: tempDir, encoding: "utf-8" }).trim();
+    const mergeCommit = git("rev-parse", "HEAD");
     const result = resolver.resolve({ target: mergeCommit });
 
     expect(result.isMergeCommit).toBe(true);

@@ -55,12 +55,12 @@ npx agent-code-review@latest uninstall --local
 | :--- | :--- | :--- |
 | **Google Antigravity** | `~/.gemini/config/skills/code-review/SKILL.md`<br>`~/.gemini/config/agents/<reviewer>/agent.md` | `.agents/skills/code-review/SKILL.md`<br>`.agents/agents/<reviewer>/agent.md` |
 | **Claude Code** | `~/.claude/skills/code-review/SKILL.md`<br>`~/.claude/agents/<reviewer>.md` | `.claude/skills/code-review/SKILL.md`<br>`.claude/agents/<reviewer>.md` |
-| **OpenAI Codex** | `~/.agents/skills/code-review/SKILL.md`<br>`~/.codex/config.toml`（自动备份并安全合并） | `.agents/skills/code-review/SKILL.md`<br>`.codex/config.toml` |
+| **OpenAI Codex** | `~/.agents/skills/code-review/SKILL.md`<br>`~/.codex/agents/<reviewer>.toml` | `.agents/skills/code-review/SKILL.md`<br>`.codex/agents/<reviewer>.toml` |
 
 ### 安装安全保障
 - **用户权限安全**：使用 Node.js `os.homedir()`，绝不要求 `sudo` 提权。
 - **清单与哈希管理**：维护 `.agent-code-review.json` 清单，精准记录受管文件路径与 SHA-256 哈希。
-- **共享配置保护**：解析验证合并后的 TOML，备份现有配置，并在私有权限的清单中记录原始内容。卸载仅在文件未被修改时恢复原始内容；已修改的共享配置及缺少恢复信息的旧版配置始终保留，即使使用 `--force`。
+- **绝不写入已有用户配置**：安装只创建自身拥有的目录与文件，绝不新增、改写或删除任何已存在的配置文件，即使使用 `--force`。Codex 会自动发现 `~/.codex/agents/*.toml` 中的 reviewer，因此无需在 `config.toml` 中注册。卸载仅移除本次安装的内容；若旧版本曾向 Codex 配置追加过内容，卸载只会打印手动清理指引，不会修改该文件。
 - **保护用户资产**：重装或更新不会默认覆盖用户修改；受管路径禁止目录穿越和符号链接。普通文件只有显式 `--force` 才允许覆盖用户编辑。
 - **优先级告警**：`doctor` 会自动检测本地项目配置是否遮蔽了全局配置并给出清晰提醒。
 
@@ -70,7 +70,9 @@ npx agent-code-review@latest uninstall --local
 
 CLI 负责安装模板、检查文件完整性和解析 Git 范围；审查由宿主 Agent 执行 skill 和原生子代理调度。本包不会自动调用 LLM。导出的 TypeScript 聚合器、验证辅助函数和报告器属于可选数据工具，安装后的 skill 不会自动调用它们。`IndependentVerifier` 只记录外部提供的验证事实，不读取代码或自行证明缺陷；无法独立调度时必须明确披露。
 
-Codex 模板使用 `developer_instructions` 和 `config_file`；Claude 模板包含必需的 YAML 元数据。平台 `verified` 标记保持 false，直到补充原生运行验证记录。
+Codex 模板使用 `name`、`description` 与 `developer_instructions`，这正是 Codex 自动发现 `~/.codex/agents/*.toml` 所需的字段，无需 `config.toml` 注册；Claude 模板包含必需的 YAML 元数据。平台 `verified` 标记保持 false，直到补充原生运行验证记录。
+
+各平台调用方式不同：Codex 中输入 **`$code-review`**，Claude Code 与 Antigravity 中输入 **`/code-review`**。
 
 ## 🏛️ 核心架构与工作流
 
@@ -170,7 +172,7 @@ npm pack --dry-run
 
 包含测试覆盖：
 1. Global First 安装生命周期、跨平台路径与主目录隔离。
-2. 共享配置文件（TOML）安全合并与备份逻辑。
+2. 跨平台路径归一化，以及宿主目录（`.claude` / `.codex` / `.gemini`）的删除保护与工具私有目录清理。
 3. Git Diff 范围解析（未提交变更、暂存区、提交范围、Merge Commit 处理、未跟踪新增文件与空 Diff 场景）。
 4. Findings 去重与多来源证据合并算法。
 5. 外部验证结果判定辅助函数（CONFIRMED / REJECTED / NEEDS_VERIFICATION）。

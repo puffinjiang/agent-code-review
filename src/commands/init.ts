@@ -72,11 +72,9 @@ export function runInit(options: InitCommandOptions = {}): number {
         ? "➕"
         : item.action === "update"
           ? "🔄"
-          : item.action === "merge"
-            ? "🔀"
-            : item.action === "skip-identical"
-              ? "✔️"
-              : "⚠️";
+          : item.action === "skip-identical"
+            ? "✔️"
+            : "⚠️";
     console.log(`  ${symbol} [${item.action}] [${item.platform}] ${item.relativePath} (${item.reason})`);
   }
 
@@ -89,7 +87,13 @@ export function runInit(options: InitCommandOptions = {}): number {
     } else {
       console.log(`📁 Local Project: Configuration installed specifically for this workspace.`);
     }
-    console.log(`💡 Usage: Type '/code-review' in your agent session to start reviewing changes.`);
+    // 各平台的 skill 调用前缀不同：Codex 用美元符（$skill-name），
+// Claude Code / Antigravity 用斜杠。详见 learn.chatgpt.com/docs/build-skills
+const usages: string[] = [];
+if (platform === "codex" || platform === "all") usages.push("$code-review (Codex)");
+if (platform === "claude-code" || platform === "all") usages.push("/code-review (Claude Code)");
+if (platform === "antigravity" || platform === "all") usages.push("/code-review (Antigravity)");
+console.log(`💡 Usage: 在 agent 会话中输入以下任一方式开始审查 → ${usages.join("   |   ")}`);
   }
 
   return 0;

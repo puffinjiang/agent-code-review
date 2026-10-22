@@ -1,7 +1,8 @@
 import * as path from "node:path";
 import * as fs from "node:fs";
-import { fileURLToPath } from "node:url";
 import { TemplateFile } from "../antigravity/index.js";
+import { toPosixRelativePath } from "../normalize-path.js";
+import { resolvePlatformTemplates } from "../templates-root.js";
 
 export class ClaudeCodeAdapter {
   public static readonly platformId = "claude-code";
@@ -13,19 +14,7 @@ export class ClaudeCodeAdapter {
     isGlobal?: boolean;
     homeDir?: string;
   } = {}): TemplateFile[] {
-    let root = options.templateRootDir;
-    if (!root) {
-      const currentDir = path.dirname(fileURLToPath(import.meta.url));
-      const cand1 = path.resolve(currentDir, "../templates/claude-code");
-      const cand2 = path.resolve(currentDir, "../../templates/claude-code");
-      if (fs.existsSync(cand1)) {
-        root = cand1;
-      } else if (fs.existsSync(cand2)) {
-        root = cand2;
-      } else {
-        root = cand1;
-      }
-    }
+    const root = resolvePlatformTemplates("claude-code", options.templateRootDir);
 
     const files: TemplateFile[] = [];
 
@@ -43,7 +32,7 @@ export class ClaudeCodeAdapter {
         } else if (entry.isFile() && (entry.name.endsWith(".md") || entry.name.endsWith(".json"))) {
           const relFromBase = path.relative(baseDir, fullPath);
           files.push({
-            relativePath: path.join(destPrefix, relFromBase),
+            relativePath: toPosixRelativePath(path.join(destPrefix, relFromBase)),
             sourceContent: fs.readFileSync(fullPath, "utf-8")
           });
         }
@@ -52,6 +41,10 @@ export class ClaudeCodeAdapter {
 
     collect(path.join(root, "agents"), path.join(root, "agents"), agentsDest);
     collect(path.join(root, "skills"), path.join(root, "skills"), skillsDest);
+
+    if (files.length === 0) {
+      throw new Error(`平台 '${this.platformId}' 模板收集结果为空（搜索根目录: ${root}），请检查模板文件完整性。`);
+    }
 
     return files;
   }

@@ -1,0 +1,8 @@
+# 模板与资产按内容哈希管理（manifest 中记录 SHA256），必须跨平台保持一致的
+# 字节形态，否则 Windows 与 Linux/macOS 上生成的哈希不同，安装/更新/卸载的
+# 「用户是否改过文件」判断会失效。
+templates/** text eol=lf
+assets/**   text eol=lf
+
+# 其余文本文件交给 Git 自动判定，避免误伤图片等二进制资源
+* text=auto

@@ -1,4 +1,3 @@
-import { execSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
@@ -10,14 +9,24 @@ export interface DetectedPlatform {
   reason: string;
 }
 
+/**
+ * 判定命令是否在 PATH 中可用。
+ *
+ * 直接遍历 PATH 而非拼接 `where` / `command -v` 交给 shell：既避免了命令字符串
+ * 插值，也省掉每平台三次子进程 spawn。
+ */
 function hasCommand(cmd: string): boolean {
-  try {
-    const checkCmd = process.platform === "win32" ? `where ${cmd}` : `command -v ${cmd}`;
-    execSync(checkCmd, { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
+  const dirs = (process.env.PATH || "").split(path.delimiter).filter(Boolean);
+  const extensions = process.platform === "win32"
+    ? (process.env.PATHEXT || ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean)
+    : [""];
+  return dirs.some((dir) => extensions.some((ext) => {
+    try {
+      return fs.statSync(path.join(dir, cmd + ext)).isFile();
+    } catch {
+      return false;
+    }
+  }));
 }
 
 export function detectPlatforms(homedir: string = os.homedir()): DetectedPlatform[] {

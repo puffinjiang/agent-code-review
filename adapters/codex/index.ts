@@ -1,7 +1,8 @@
 import * as path from "node:path";
 import * as fs from "node:fs";
-import { fileURLToPath } from "node:url";
 import { TemplateFile } from "../antigravity/index.js";
+import { toPosixRelativePath } from "../normalize-path.js";
+import { resolvePlatformTemplates } from "../templates-root.js";
 
 export class CodexAdapter {
   public static readonly platformId = "codex";
@@ -13,19 +14,7 @@ export class CodexAdapter {
     isGlobal?: boolean;
     homeDir?: string;
   } = {}): TemplateFile[] {
-    let root = options.templateRootDir;
-    if (!root) {
-      const currentDir = path.dirname(fileURLToPath(import.meta.url));
-      const cand1 = path.resolve(currentDir, "../templates/codex");
-      const cand2 = path.resolve(currentDir, "../../templates/codex");
-      if (fs.existsSync(cand1)) {
-        root = cand1;
-      } else if (fs.existsSync(cand2)) {
-        root = cand2;
-      } else {
-        root = cand1;
-      }
-    }
+    const root = resolvePlatformTemplates("codex", options.templateRootDir);
 
     const files: TemplateFile[] = [];
 
@@ -44,21 +33,15 @@ export class CodexAdapter {
       for (const entry of fs.readdirSync(agentsDir)) {
         if (entry.endsWith(".toml")) {
           files.push({
-            relativePath: path.join(".codex/agents", entry),
+            relativePath: toPosixRelativePath(path.join(".codex/agents", entry)),
             sourceContent: fs.readFileSync(path.join(agentsDir, entry), "utf-8")
           });
         }
       }
     }
 
-    // 3. Config TOML into .codex/config.toml with append merge strategy
-    const configPath = path.join(root, "config.toml");
-    if (fs.existsSync(configPath)) {
-      files.push({
-        relativePath: ".codex/config.toml",
-        sourceContent: fs.readFileSync(configPath, "utf-8"),
-        mergeStrategy: "append-toml-section"
-      });
+    if (files.length === 0) {
+      throw new Error(`平台 '${this.platformId}' 模板收集结果为空（搜索根目录: ${root}），请检查模板文件完整性。`);
     }
 
     return files;

@@ -4,7 +4,7 @@ import * as os from "node:os";
 import { ManifestManager, InstallationManifest } from "./manifest.js";
 import { InstallScope } from "./installer.js";
 
-import { resolveManagedPath } from "./managed-path.js";
+import { resolveManagedPath, isCleanableDir, LEGACY_SHARED_CONFIG } from "./managed-path.js";
 
 export interface UninstallOptions {
   workspaceRoot?: string;
@@ -21,6 +21,11 @@ export interface UninstallResult {
   dryRun: boolean;
   removedFiles: string[];
   skippedFiles: string[];
+  /**
+   * 旧版本写入过、但本项目不再管理的用户配置文件。卸载器不触碰这些文件，
+   * 需由用户按指引手动清理。
+   */
+  manualCleanup: string[];
   manifestRemoved: boolean;
   errors: string[];
 }
@@ -44,20 +49,28 @@ export class Uninstaller {
     return this.scope === "global" ? this.homeDir : this.workspaceRoot;
   }
 
+  /**
+   * 自下而上清理本项目独占且已变空的目录。
+   *
+   * 只清理 managed-path.ts 登记为「工具私有」的目录。宿主共享目录
+   * （.claude / .codex / .gemini 及其子目录）一律保留 —— 判据是目录归属，
+   * 而非 scope：local scope 下 <workspace>/.claude、<workspace>/.codex
+   * 同属宿主项目级配置，同样受保护。
+   */
   private cleanEmptyParentDirs(filePath: string, baseDir: string): void {
     let currentDir = path.dirname(filePath);
-    while (currentDir !== baseDir && currentDir !== path.dirname(currentDir)) {
+    while (currentDir !== baseDir) {
+      const relDir = path.relative(baseDir, currentDir);
+      if (!relDir || !isCleanableDir(relDir)) break;
       try {
-        const files = fs.readdirSync(currentDir);
-        if (files.length === 0) {
-          fs.rmdirSync(currentDir);
-          currentDir = path.dirname(currentDir);
-        } else {
-          break;
-        }
+        if (fs.readdirSync(currentDir).length !== 0) break;
+        fs.rmdirSync(currentDir);
       } catch {
         break;
       }
+      const parent = path.dirname(currentDir);
+      if (parent === currentDir) break;
+      currentDir = parent;
     }
   }
 
@@ -73,6 +86,7 @@ export class Uninstaller {
         dryRun: this.dryRun,
         removedFiles: [],
         skippedFiles: [],
+        manualCleanup: [],
         manifestRemoved: false,
         errors: [`No ${this.scope} .agent-code-review.json manifest found in ${baseDir}. Nothing to uninstall.`]
       };
@@ -80,6 +94,7 @@ export class Uninstaller {
 
     const removedFiles: string[] = [];
     const skippedFiles: string[] = [];
+    const manualCleanup: string[] = [];
     const errors: string[] = [];
 
     for (const entry of manifest.files) {
@@ -89,21 +104,12 @@ export class Uninstaller {
         if (!fs.existsSync(fullPath)) continue;
         const content = fs.readFileSync(fullPath, "utf-8");
         const modified = ManifestManager.computeHash(content) !== entry.hash;
-        if (entry.path === ".codex/config.toml") {
-          // Old manifests claimed ownership of an entire shared file. Never delete
-          // or force-overwrite that file without explicit restoration metadata.
-          if (entry.sharedConfig !== true || entry.originalContent === undefined || modified) {
-            throw new Error("Shared configuration has edits or legacy ownership metadata; preserving user configuration.");
-          }
-          if (!this.dryRun) {
-            resolveManagedPath(baseDir, entry.path);
-            if (entry.originalContent === null) fs.unlinkSync(fullPath);
-            else fs.writeFileSync(fullPath, entry.originalContent, "utf-8");
-          }
+        if (entry.path === LEGACY_SHARED_CONFIG) {
+          // 旧版本曾把用户的 .codex/config.toml 当作受管文件整份覆写。
+          // 卸载器永不写入或删除用户配置：这段注册块在 Codex 改用
+          // agents 目录自动发现后已无作用，交由用户按指引手动移除。
+          manualCleanup.push(entry.path);
         } else {
-          if (entry.sharedConfig || entry.originalContent !== undefined) {
-            throw new Error("Restoration metadata is only allowed for the shared Codex configuration.");
-          }
           if (modified && !this.force) {
             throw new Error("File was modified after installation; preserving user edits (use --force to remove).");
           }
@@ -111,9 +117,9 @@ export class Uninstaller {
             resolveManagedPath(baseDir, entry.path);
             fs.unlinkSync(fullPath);
           }
+          removedFiles.push(entry.path);
+          if (!this.dryRun) this.cleanEmptyParentDirs(fullPath, baseDir);
         }
-        removedFiles.push(entry.path);
-        if (!this.dryRun) this.cleanEmptyParentDirs(fullPath, baseDir);
       } catch (error) {
         skippedFiles.push(entry.path);
         errors.push(`Cannot remove '${entry.path}': ${(error as Error).message}`);
@@ -126,7 +132,7 @@ export class Uninstaller {
     }
     return {
       scope: this.scope, baseDir, success: errors.length === 0, dryRun: this.dryRun,
-      removedFiles, skippedFiles, manifestRemoved, errors
+      removedFiles, skippedFiles, manualCleanup, manifestRemoved, errors
     };
   }
 }

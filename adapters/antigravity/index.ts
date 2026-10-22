@@ -1,11 +1,11 @@
 import * as path from "node:path";
 import * as fs from "node:fs";
-import { fileURLToPath } from "node:url";
+import { toPosixRelativePath } from "../normalize-path.js";
+import { resolvePlatformTemplates } from "../templates-root.js";
 
 export interface TemplateFile {
   relativePath: string;
   sourceContent: string;
-  mergeStrategy?: "overwrite-unmodified" | "append-toml-section" | "merge-json";
 }
 
 export class AntigravityAdapter {
@@ -19,19 +19,7 @@ export class AntigravityAdapter {
     homeDir?: string;
   } = {}): TemplateFile[] {
     const isGlobal = options.isGlobal !== false; // Global by default
-    let root = options.templateRootDir;
-    if (!root) {
-      const currentDir = path.dirname(fileURLToPath(import.meta.url));
-      const cand1 = path.resolve(currentDir, "../templates/antigravity");
-      const cand2 = path.resolve(currentDir, "../../templates/antigravity");
-      if (fs.existsSync(cand1)) {
-        root = cand1;
-      } else if (fs.existsSync(cand2)) {
-        root = cand2;
-      } else {
-        root = cand1;
-      }
-    }
+    const root = resolvePlatformTemplates("antigravity", options.templateRootDir);
 
     const files: TemplateFile[] = [];
 
@@ -48,7 +36,7 @@ export class AntigravityAdapter {
         } else if (entry.isFile() && (entry.name.endsWith(".md") || entry.name.endsWith(".json"))) {
           const relFromBase = path.relative(baseDir, fullPath);
           files.push({
-            relativePath: path.join(destPrefix, relFromBase),
+            relativePath: toPosixRelativePath(path.join(destPrefix, relFromBase)),
             sourceContent: fs.readFileSync(fullPath, "utf-8")
           });
         }
@@ -65,11 +53,15 @@ export class AntigravityAdapter {
         const skillSource = path.join(root, "skills/code-review/SKILL.md");
         if (fs.existsSync(skillSource)) {
           files.push({
-            relativePath: ".gemini/antigravity-cli/skills/code-review/SKILL.md",
+            relativePath: toPosixRelativePath(".gemini/antigravity-cli/skills/code-review/SKILL.md"),
             sourceContent: fs.readFileSync(skillSource, "utf-8")
           });
         }
       }
+    }
+
+    if (files.length === 0) {
+      throw new Error(`平台 '${this.platformId}' 模板收集结果为空（搜索根目录: ${root}），请检查模板文件完整性。`);
     }
 
     return files;

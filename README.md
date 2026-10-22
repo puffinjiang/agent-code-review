@@ -53,12 +53,12 @@ npx agent-code-review@latest uninstall --local
 | :--- | :--- | :--- |
 | **Google Antigravity** | `~/.gemini/config/skills/code-review/SKILL.md`<br>`~/.gemini/config/agents/<reviewer>/agent.md` | `.agents/skills/code-review/SKILL.md`<br>`.agents/agents/<reviewer>/agent.md` |
 | **Claude Code** | `~/.claude/skills/code-review/SKILL.md`<br>`~/.claude/agents/<reviewer>.md` | `.claude/skills/code-review/SKILL.md`<br>`.claude/agents/<reviewer>.md` |
-| **OpenAI Codex** | `~/.agents/skills/code-review/SKILL.md`<br>`~/.codex/config.toml` (safe merge with backup) | `.agents/skills/code-review/SKILL.md`<br>`.codex/config.toml` |
+| **OpenAI Codex** | `~/.agents/skills/code-review/SKILL.md`<br>`~/.codex/agents/<reviewer>.toml` | `.agents/skills/code-review/SKILL.md`<br>`.codex/agents/<reviewer>.toml` |
 
 ### Safety Guarantees
 - **No Elevated Privileges**: Uses standard user permissions (`os.homedir()`), never requires `sudo`.
 - **Manifest Tracking**: Maintains `.agent-code-review.json` recording paths, platforms, and SHA-256 hashes.
-- **Shared Configuration**: Validate merged TOML, back up existing configuration, and record its original bytes in a private manifest. Uninstall restores those bytes only if the installed file is unchanged. Edited shared files and legacy entries without restoration metadata are preserved, even with `--force`.
+- **Never Writes Existing User Config**: Installation only creates directories and files it owns. It never adds to, rewrites, or deletes an existing configuration file — not even with `--force`. Codex discovers reviewer agents from `~/.codex/agents/*.toml` automatically, so no entry in `config.toml` is required. Uninstall removes only what was installed; if an older version ever appended a block to your Codex config, uninstall prints manual removal instructions instead of editing the file.
 - **Conflict Prevention**: Refuses to overwrite unmanaged or user-edited managed files without explicit `--force`. Conflicting shared configuration is always preserved. Managed paths cannot traverse directories or follow symlinks.
 - **Precedence Awareness**: `doctor` automatically warns if a local workspace configuration overrides your global settings.
 
@@ -68,7 +68,9 @@ npx agent-code-review@latest uninstall --local
 
 The CLI installs templates, diagnoses file integrity, and resolves Git scopes. The host agent executes the review skill and native delegation; the package does not automatically invoke an LLM. The exported TypeScript aggregator, verifier helper, and reporter are optional data utilities and are not automatically called by the installed skill. `IndependentVerifier` records explicit external evaluation facts; it does not inspect code or prove findings itself. If independent delegation is unavailable, the skill must disclose that limitation.
 
-Codex reviewer files use `developer_instructions` and role `config_file` references. Claude reviewer files include required YAML metadata. The platform verification flags remain false until native runtime smoke tests are recorded.
+Codex reviewer files use `name`, `description`, and `developer_instructions`, which is what Codex's `~/.codex/agents/*.toml` auto-discovery requires — no `config.toml` registration. Claude reviewer files include required YAML metadata. The platform verification flags remain false until native runtime smoke tests are recorded.
+
+Skill invocation differs by platform: type **`$code-review`** in Codex, and **`/code-review`** in Claude Code and Antigravity.
 
 ## 🏛️ Architecture & Workflow
 

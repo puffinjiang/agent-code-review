@@ -24,7 +24,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "prepack": "npm run build"
+    "prepack": "node scripts/verify-assets.mjs && npm run build",
+    "verify-assets": "node scripts/verify-assets.mjs"
   },
   "keywords": [
     "code-review",
@@ -41,11 +42,11 @@
     "url": "https://github.com/puffin/agent-code-review.git"
   },
   "dependencies": {
-    "commander": "^13.1.0",
-    "smol-toml": "^1.9.1"
+    "commander": "^13.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.13.0",
+    "smol-toml": "^1.9.1",
     "tsup": "^8.3.6",
     "typescript": "^5.7.3",
     "vitest": "^3.0.0"

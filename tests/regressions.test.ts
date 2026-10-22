@@ -8,6 +8,8 @@ import { Uninstaller } from "../src/lib/uninstaller.js";
 import { ManifestManager } from "../src/lib/manifest.js";
 import { GitScopeResolver } from "../core/git/scope.js";
 import { IndependentVerifier } from "../core/verifier/verifier.js";
+import { getAdapter } from "../adapters/index.js";
+import { resolveManagedPath } from "../src/lib/managed-path.js";
 import { FindingsAggregator } from "../core/aggregator/aggregator.js";
 import { ReviewReporter } from "../core/reporter/reporter.js";
 import { Finding, validateFinding } from "../core/schemas/findings.js";
@@ -19,6 +21,24 @@ const finding: Finding = {
   recommendation: "Verify it", origin: "pre-existing-unrelated",
   verification: { method: "static-analysis", tests_executed: false }, root_cause_key: "operation:claim"
 };
+
+/**
+ * Windows 创建符号链接需要开发者模式或管理员权限，缺失时相关用例会以 EPERM 失败。
+ * 这属于运行环境限制而非产品缺陷，故按能力探测跳过。
+ */
+function symlinksAvailable(): boolean {
+  const probe = fs.mkdtempSync(path.join(os.tmpdir(), "acr-symlink-probe-"));
+  try {
+    fs.writeFileSync(path.join(probe, "target"), "x");
+    fs.symlinkSync(path.join(probe, "target"), path.join(probe, "link"));
+    return true;
+  } catch {
+    return false;
+  } finally {
+    fs.rmSync(probe, { recursive: true, force: true });
+  }
+}
+const canSymlink = symlinksAvailable();
 
 describe("Review safety regressions", () => {
   let root: string;
@@ -42,7 +62,8 @@ describe("Review safety regressions", () => {
     expect(fs.existsSync(path.join(repo, "injected"))).toBe(false);
   });
 
-  it("preserves special filenames in untracked and staged scopes", () => {
+  // Win32 无法表示含换行或尾随空格的文件名（会被静默规范化，导致读回时 ENOENT）。
+  it.skipIf(process.platform === "win32")("preserves special filenames in untracked and staged scopes", () => {
     const name = " 中文 file\n.ts ";
     fs.writeFileSync(path.join(repo, name), "export const marker = true;\n");
     const resolver = new GitScopeResolver(repo);
@@ -68,7 +89,7 @@ describe("Review safety regressions", () => {
     expect(new GitScopeResolver(unborn).resolve({ target: "staged" }).patch).toContain("+staged version");
   });
 
-  it("reviews a symlink target string rather than its external contents", () => {
+  it.skipIf(!canSymlink)("reviews a symlink target string rather than its external contents", () => {
     fs.writeFileSync(path.join(root, "secret"), "OUTSIDE_SECRET_MARKER");
     fs.symlinkSync("../secret", path.join(repo, "link"));
     const scope = new GitScopeResolver(repo).resolve();
@@ -122,34 +143,32 @@ describe("Review safety regressions", () => {
     expect(fs.readFileSync(file, "utf-8")).not.toContain("USER_CUSTOMIZATION");
   });
 
-  it.each(["", "# existing\nmodel = 'user-model'\n"])("restores original shared config byte-for-byte (%j)", (original) => {
+  it.each(["", "# existing\nmodel = 'user-model'\n"])("never touches an existing shared config (%j)", (original) => {
     fs.mkdirSync(path.join(root, ".codex"));
     const config = path.join(root, ".codex/config.toml");
     fs.writeFileSync(config, original);
     const installer = new Installer({ homeDir: root, platform: "codex" });
     expect(installer.execute().success).toBe(true);
     expect(installer.execute().items.every((item) => item.action === "skip-identical")).toBe(true);
-    const preview = new Uninstaller({ homeDir: root, dryRun: true }).execute();
-    expect(preview.success).toBe(true);
-    expect(fs.readFileSync(config, "utf-8")).toContain("[agents.correctness_reviewer]");
     expect(new Uninstaller({ homeDir: root }).execute().success).toBe(true);
     expect(fs.readFileSync(config, "utf-8")).toBe(original);
   });
 
-  it("retains the initial restoration data when updating a shared config template", () => {
-    fs.mkdirSync(path.join(root, ".codex"));
-    const config = path.join(root, ".codex/config.toml");
-    const original = 'model = "original"\n';
-    fs.writeFileSync(config, original);
-    const templateDir = path.join(root, "codex-templates");
-    fs.cpSync(path.resolve("templates/codex"), templateDir, { recursive: true });
-    const options = { homeDir: root, platform: "codex" as const, templateDir };
-    expect(new Installer(options).execute().success).toBe(true);
-    fs.appendFileSync(path.join(templateDir, "config.toml"), "\n# next template version\n");
-    expect(new Installer(options).execute().success).toBe(true);
-    expect(fs.readFileSync(config, "utf-8")).toContain("next template version");
-    expect(new Uninstaller({ homeDir: root }).execute().success).toBe(true);
-    expect(fs.readFileSync(config, "utf-8")).toBe(original);
+  it("creates no shared config and retires legacy manifest entries", () => {
+    expect(new Installer({ homeDir: root, platform: "codex" }).execute().success).toBe(true);
+    // Codex 通过 .codex/agents/*.toml 自动发现角色，不需要 config.toml
+    expect(fs.existsSync(path.join(root, ".codex/config.toml"))).toBe(false);
+    expect(fs.existsSync(path.join(root, ".codex/agents/correctness-reviewer.toml"))).toBe(true);
+
+    // 旧版清单残留的注册条目，应在重新安装时退役
+    const manifest = ManifestManager.load(root)!;
+    manifest.files.push({
+      path: ".codex/config.toml", hash: "a".repeat(64), platform: "codex",
+      installedAt: manifest.installedAt, sharedConfig: true, originalContent: ""
+    });
+    ManifestManager.save(root, manifest);
+    expect(new Installer({ homeDir: root, platform: "codex" }).execute().success).toBe(true);
+    expect(ManifestManager.load(root)!.files.map((f) => f.path)).not.toContain(".codex/config.toml");
   });
 
   it("upgrades an older single-platform manifest without losing file ownership", () => {
@@ -172,39 +191,57 @@ describe("Review safety regressions", () => {
     expect(fs.existsSync(path.join(root, ".codex/config.toml"))).toBe(false);
   });
 
-  it("preserves edits to shared config even during forced uninstall", () => {
+  it("leaves a legacy shared config untouched during forced uninstall", () => {
     new Installer({ homeDir: root, platform: "codex" }).execute();
+    // 模拟旧版清单记录了 config.toml，且 originalContent === null
+    // （旧语义下这意味着「由本工具创建」，会被直接删除）
+    const manifest = ManifestManager.load(root)!;
+    manifest.files.push({
+      path: ".codex/config.toml", hash: ManifestManager.computeHash("merged"),
+      platform: "codex", installedAt: manifest.installedAt, sharedConfig: true, originalContent: null
+    });
+    ManifestManager.save(root, manifest);
+
     const config = path.join(root, ".codex/config.toml");
-    fs.appendFileSync(config, "\n# custom\n");
-    const content = fs.readFileSync(config, "utf-8");
-    expect(new Installer({ homeDir: root, platform: "codex", force: true }).execute().success).toBe(false);
+    fs.writeFileSync(config, "# user edited\n");
+    const before = fs.readFileSync(config, "utf-8");
+
     const result = new Uninstaller({ homeDir: root, force: true }).execute();
-    expect(result.skippedFiles).toContain(".codex/config.toml");
-    expect(result.manifestRemoved).toBe(false);
-    expect(fs.readFileSync(config, "utf-8")).toBe(content);
+    expect(result.success).toBe(true);
+    expect(result.manualCleanup).toContain(".codex/config.toml");
+    expect(fs.readFileSync(config, "utf-8")).toBe(before);
+    expect(fs.existsSync(path.join(root, ".agent-code-review.json"))).toBe(false);
   });
 
   it.each([
     'agents = { correctness_reviewer = { description = "user" } }\n',
     '[agents."security_reviewer"]\ndescription = "user"\n',
     'model = "unterminated\n'
-  ])("refuses invalid TOML or existing reviewer ownership without modifying files (%j)", (original) => {
+  ])("leaves unparseable or user-owned Codex config untouched (%j)", (original) => {
     fs.mkdirSync(path.join(root, ".codex"));
     const config = path.join(root, ".codex/config.toml");
     fs.writeFileSync(config, original);
-    expect(new Installer({ homeDir: root, platform: "codex", force: true }).execute().success).toBe(false);
+    expect(new Installer({ homeDir: root, platform: "codex", force: true }).execute().success).toBe(true);
     expect(fs.readFileSync(config, "utf-8")).toBe(original);
-    expect(fs.existsSync(path.join(root, ".agents"))).toBe(false);
   });
 
-  it("preserves shared configs from legacy manifests", () => {
+  it("reports legacy shared configs for manual cleanup instead of restoring them", () => {
+    const config = path.join(root, ".codex/config.toml");
+    fs.mkdirSync(path.dirname(config), { recursive: true });
+    const original = 'model = "x"\n';
+    fs.writeFileSync(config, original);
     new Installer({ homeDir: root, platform: "codex" }).execute();
     const manifest = ManifestManager.load(root)!;
-    const entry = manifest.files.find((file) => file.path === ".codex/config.toml")!;
-    delete entry.sharedConfig; delete entry.originalContent;
+    manifest.files.push({
+      path: ".codex/config.toml", hash: ManifestManager.computeHash("merged"),
+      platform: "codex", installedAt: manifest.installedAt
+    });
     ManifestManager.save(root, manifest);
-    expect(new Uninstaller({ homeDir: root, force: true }).execute().skippedFiles).toContain(entry.path);
-    expect(fs.existsSync(path.join(root, entry.path))).toBe(true);
+
+    const result = new Uninstaller({ homeDir: root, force: true }).execute();
+    expect(result.manualCleanup).toContain(".codex/config.toml");
+    expect(result.errors).toEqual([]);
+    expect(fs.readFileSync(config, "utf-8")).toBe(original);
   });
 
   it("blocks traversal and unrecognized paths in an otherwise valid manifest", () => {
@@ -220,7 +257,7 @@ describe("Review safety regressions", () => {
     expect(fs.readFileSync(outside, "utf-8")).toBe("known");
   });
 
-  it("blocks symlinked managed directories on install and uninstall", () => {
+  it.skipIf(!canSymlink)("blocks symlinked managed directories on install and uninstall", () => {
     const outside = path.join(root, "outside"); fs.mkdirSync(outside);
     fs.symlinkSync(outside, path.join(repo, ".claude"));
     expect(new Installer({ homeDir: repo, platform: "claude-code" }).execute().success).toBe(false);
@@ -250,5 +287,60 @@ describe("Review safety regressions", () => {
 
   it.each([{ evidence: [42] }, { start_line: NaN }, { end_line: Infinity }, { verification: { method: "invented", tests_executed: false } }])("rejects invalid protocol data %j", (invalid) => {
     expect(validateFinding({ ...finding, ...invalid }).valid).toBe(false);
+  });
+
+  // ---- 跨平台路径归一化（D-01）与卸载删除边界（C.1/C.2）----
+
+  it.each(["antigravity", "claude-code", "codex"] as const)(
+    "emits POSIX-only relative paths for %s that satisfy the managed-path allowlist", (platform) => {
+      const files = getAdapter(platform).getTemplateFiles({ isGlobal: true, homeDir: root });
+      expect(files.length).toBeGreaterThan(0);
+      for (const f of files) {
+        expect(f.relativePath).not.toContain("\\");
+        expect(() => resolveManagedPath(root, f.relativePath)).not.toThrow();
+      }
+    }
+  );
+
+  it("installs and uninstalls cleanly when the Antigravity CLI directory exists", () => {
+    fs.mkdirSync(path.join(root, ".gemini/antigravity-cli"), { recursive: true });
+    const skill = ".gemini/antigravity-cli/skills/code-review/SKILL.md";
+
+    const plan = getAdapter("antigravity").getTemplateFiles({ isGlobal: true, homeDir: root });
+    expect(plan.map((f) => f.relativePath)).toContain(skill);
+
+    expect(new Installer({ homeDir: root, platform: "antigravity" }).execute().success).toBe(true);
+    expect(fs.existsSync(path.join(root, skill))).toBe(true);
+
+    const result = new Uninstaller({ homeDir: root }).execute();
+    expect(result.errors).toEqual([]);
+    expect(result.success).toBe(true);
+    expect(fs.existsSync(path.join(root, skill))).toBe(false);
+    // manifest 必须一并清除，否则卸载将永久失败
+    expect(fs.existsSync(path.join(root, ".agent-code-review.json"))).toBe(false);
+  });
+
+  it("keeps host-owned directories but removes tool-private ones on uninstall", () => {
+    expect(new Installer({ homeDir: root, platform: "all" }).execute().success).toBe(true);
+    expect(new Uninstaller({ homeDir: root }).execute().success).toBe(true);
+
+    // 宿主共享目录：即使为空也必须存活
+    for (const hostDir of [".claude", ".codex", ".gemini"]) {
+      expect(fs.existsSync(path.join(root, hostDir)), `${hostDir} 不应被卸载删除`).toBe(true);
+    }
+    // 工具私有目录应被清理，不留空文件夹
+    expect(fs.existsSync(path.join(root, ".agents"))).toBe(false);
+  });
+
+  it("keeps host-owned directories in a local workspace too", () => {
+    const opts = { workspaceRoot: repo, scope: "local" as const, platform: "all" as const };
+    expect(new Installer(opts).execute().success).toBe(true);
+    expect(new Uninstaller({ workspaceRoot: repo, scope: "local" }).execute().success).toBe(true);
+
+    // <workspace>/.claude 与 <workspace>/.codex 是宿主的项目级配置目录，
+    // 不能因为 scope === "local" 就失去保护（见方案 C.1）
+    expect(fs.existsSync(path.join(repo, ".claude"))).toBe(true);
+    expect(fs.existsSync(path.join(repo, ".codex"))).toBe(true);
+    expect(fs.existsSync(path.join(repo, ".agents"))).toBe(false);
   });
 });

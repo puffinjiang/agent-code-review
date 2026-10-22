@@ -88,7 +88,9 @@ describe("Global First Installer Lifecycle", () => {
     expect(fs.existsSync(path.join(tempHome, ".claude/skills/code-review/SKILL.md"))).toBe(true);
     // Verify Codex
     expect(fs.existsSync(path.join(tempHome, ".agents/skills/code-review/SKILL.md"))).toBe(true);
-    expect(fs.existsSync(path.join(tempHome, ".codex/config.toml"))).toBe(true);
+    expect(fs.existsSync(path.join(tempHome, ".codex/agents/correctness-reviewer.toml"))).toBe(true);
+    // Codex 通过 .codex/agents/*.toml 自动发现角色，安装器不得创建 config.toml
+    expect(fs.existsSync(path.join(tempHome, ".codex/config.toml"))).toBe(false);
   });
 
   it("should be idempotent when re-run globally", () => {
@@ -108,29 +110,22 @@ describe("Global First Installer Lifecycle", () => {
     }
   });
 
-  it("should safely merge shared config files with backup", () => {
-    // Pre-create existing .codex/config.toml
+  it("should never modify an existing .codex/config.toml", () => {
+    // 用户的 Codex 配置可能包含模型、provider、MCP 等内容，任何写入都不可接受
     const codexDir = path.join(tempHome, ".codex");
     fs.mkdirSync(codexDir, { recursive: true });
     const configPath = path.join(codexDir, "config.toml");
-    fs.writeFileSync(configPath, "# User existing config\nmodel = 'gpt-4'\n", "utf-8");
+    const original = "# User existing config\nmodel = 'gpt-4'\n\n[mcp_servers.docs]\ncommand = 'docs-server'\n";
+    fs.writeFileSync(configPath, original, "utf-8");
 
-    const installer = new Installer({
-      homeDir: tempHome,
-      platform: "codex"
-    });
-
-    const result = installer.execute();
+    const result = new Installer({ homeDir: tempHome, platform: "codex" }).execute();
     expect(result.success).toBe(true);
+    expect(fs.readFileSync(configPath, "utf-8")).toBe(original);
+    // 不应产生备份残留
+    expect(fs.readdirSync(codexDir).filter((f) => f.startsWith("config.toml.bak."))).toEqual([]);
 
-    const mergedContent = fs.readFileSync(configPath, "utf-8");
-    expect(mergedContent).toContain("model = 'gpt-4'");
-    expect(mergedContent).toContain("[agents.correctness_reviewer]");
-
-    // Verify backup created
-    const files = fs.readdirSync(codexDir);
-    const backup = files.find((f) => f.startsWith("config.toml.bak."));
-    expect(backup).toBeDefined();
+    expect(new Uninstaller({ homeDir: tempHome }).execute().success).toBe(true);
+    expect(fs.readFileSync(configPath, "utf-8")).toBe(original);
   });
 
   it("should protect modified files during uninstall unless forced", () => {

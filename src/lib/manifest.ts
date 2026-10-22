@@ -12,7 +12,13 @@ export interface ManifestFileEntry {
   hash: string;
   platform: string;
   installedAt: string;
+  /**
+   * @deprecated 仅用于读取旧版清单。早期版本向用户的 `~/.codex/config.toml`
+   * 追加注册块，并在此保存原文快照。现已改为不写入该文件（Codex 支持
+   * `~/.codex/agents/*.toml` 自动发现），不再产生这两个字段。
+   */
   sharedConfig?: boolean;
+  /** @deprecated 同 {@link ManifestFileEntry.sharedConfig} */
   originalContent?: string | null;
 }
 

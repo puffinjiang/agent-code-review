@@ -1,12 +1,11 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import { parse as parseToml } from "smol-toml";
 import { ManifestManager, InstallationManifest, ManifestFileEntry } from "./manifest.js";
 import { SupportedPlatform, getAdapter, PLATFORMS } from "../../adapters/index.js";
 import { TemplateFile } from "../../adapters/antigravity/index.js";
 
-import { resolveManagedPath } from "./managed-path.js";
+import { resolveManagedPath, LEGACY_SHARED_CONFIG } from "./managed-path.js";
 
 export type InstallScope = "global" | "local";
 
@@ -20,7 +19,7 @@ export interface InstallOptions {
   templateDir?: string;
 }
 
-export type FileInstallAction = "create" | "update" | "skip-identical" | "conflict" | "merge";
+export type FileInstallAction = "create" | "update" | "skip-identical" | "conflict";
 
 export interface InstallPlanItem {
   relativePath: string;
@@ -29,10 +28,6 @@ export interface InstallPlanItem {
   reason: string;
   sourceContent: string;
   hash: string;
-  mergeStrategy?: "overwrite-unmodified" | "append-toml-section" | "merge-json";
-  backupPath?: string;
-  sharedConfig?: boolean;
-  originalContent?: string | null;
 }
 
 export interface InstallResult {
@@ -110,36 +105,6 @@ export class Installer {
           }
           continue;
         }
-        if (tpl.mergeStrategy === "append-toml-section") {
-          const exists = fs.existsSync(fullDestPath);
-          const existing = exists ? fs.readFileSync(fullDestPath, "utf-8") : null;
-          const existingHash = existing === null ? undefined : ManifestManager.computeHash(existing);
-          const managed = previous?.sharedConfig === true;
-          const original = managed ? previous.originalContent : existing;
-          // Legacy manifests do not describe which bytes belong to the user.
-          // Preserve such configs rather than guessing at ownership.
-          const originalDocument = parseToml(original ?? "");
-          const declaredAgents = originalDocument.agents;
-          const ownedNames = ["correctness_reviewer", "security_reviewer", "concurrency_reviewer", "performance_reviewer", "findings_verifier"];
-          const hasUnownedRoles = declaredAgents !== null && typeof declaredAgents === "object" &&
-            ownedNames.some((name) => Object.hasOwn(declaredAgents, name));
-          const conflict = (exists && previous && !managed) ||
-            (managed && exists && existingHash !== previous.hash) ||
-            (!managed && hasUnownedRoles);
-          const source = `${original ?? ""}${original ? "\n" : ""}# --- BEGIN Agent Code Review ---\n${tpl.sourceContent}\n# --- END Agent Code Review ---\n`;
-          if (!conflict) parseToml(source); // reject duplicate/invalid TOML before writing anything
-          const sourceHash = ManifestManager.computeHash(source);
-          items.push({
-            relativePath: tpl.relativePath, platform: p,
-            action: conflict ? "conflict" : !exists ? "create" : existing === source ? "skip-identical" : "merge",
-            reason: conflict ? "Shared configuration has edits or unowned reviewer sections; preserve it and resolve ownership before updating." : "Manage reviewer configuration while retaining the original user configuration",
-            sourceContent: source, hash: sourceHash, mergeStrategy: tpl.mergeStrategy,
-            sharedConfig: true, originalContent: original ?? null,
-            backupPath: exists && !conflict && existing !== source ? `${fullDestPath}.bak.${Date.now()}` : undefined
-          });
-          if (conflict) conflicts.push(tpl.relativePath);
-          continue;
-        }
         const newHash = ManifestManager.computeHash(tpl.sourceContent);
 
         if (!fs.existsSync(fullDestPath)) {
@@ -150,7 +115,6 @@ export class Installer {
             reason: `New ${p} configuration file`,
             sourceContent: tpl.sourceContent,
             hash: newHash,
-            mergeStrategy: tpl.mergeStrategy
           });
         } else {
           const existingContent = fs.readFileSync(fullDestPath, "utf-8");
@@ -164,7 +128,6 @@ export class Installer {
               reason: "File already exists and content is identical",
               sourceContent: tpl.sourceContent,
               hash: newHash,
-              mergeStrategy: tpl.mergeStrategy
             });
           } else if (previous && (existingHash === previous.hash || this.force)) {
             items.push({
@@ -174,7 +137,6 @@ export class Installer {
               reason: "Updating managed file from newer template",
               sourceContent: tpl.sourceContent,
               hash: newHash,
-              mergeStrategy: tpl.mergeStrategy
             });
           } else {
             // Unmanaged file conflict
@@ -186,7 +148,6 @@ export class Installer {
                 reason: "Overwriting unmanaged file due to --force",
                 sourceContent: tpl.sourceContent,
                 hash: newHash,
-                mergeStrategy: tpl.mergeStrategy
               });
             } else {
               items.push({
@@ -196,7 +157,6 @@ export class Installer {
                 reason: previous ? "Managed file has user edits; use --force to replace it." : "Unmanaged file exists; use --force to replace it.",
                 sourceContent: tpl.sourceContent,
                 hash: newHash,
-                mergeStrategy: tpl.mergeStrategy
               });
               conflicts.push(tpl.relativePath);
             }
@@ -255,6 +215,10 @@ export class Installer {
 
     if (existingManifest) {
       for (const entry of existingManifest.files) {
+        // 早期版本曾把用户的 .codex/config.toml 记入清单。现在 Codex 支持
+        // agents 目录自动发现，注册块不再产生 —— 在下次安装时把这条记录退役，
+        // 避免卸载时反复提示一个早已不再写入的路径。
+        if (entry.path === LEGACY_SHARED_CONFIG) continue;
         manifestFilesMap.set(entry.path, entry);
       }
     }
@@ -263,14 +227,9 @@ export class Installer {
       const fullPath = resolveManagedPath(baseDir, item.relativePath);
       const parentDir = path.dirname(fullPath);
 
-      if (item.action === "create" || item.action === "update" || item.action === "merge") {
+      if (item.action === "create" || item.action === "update") {
         if (!fs.existsSync(parentDir)) {
           fs.mkdirSync(parentDir, { recursive: true });
-        }
-
-        // Handle backup if merging
-        if (item.action === "merge" && item.backupPath && fs.existsSync(fullPath)) {
-          fs.copyFileSync(fullPath, item.backupPath);
         }
 
         fs.writeFileSync(fullPath, item.sourceContent, "utf-8");
@@ -280,9 +239,7 @@ export class Installer {
         path: item.relativePath,
         hash: item.hash,
         platform: item.platform,
-        installedAt: now,
-        sharedConfig: item.sharedConfig,
-        originalContent: item.originalContent
+        installedAt: now
       });
     }
 

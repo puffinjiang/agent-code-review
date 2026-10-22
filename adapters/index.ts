@@ -2,6 +2,10 @@ import { AntigravityAdapter } from "./antigravity/index.js";
 import { CodexAdapter } from "./codex/index.js";
 import { ClaudeCodeAdapter } from "./claude-code/index.js";
 
+export { toPosixRelativePath } from "./normalize-path.js";
+export { resolveTemplatesRoot, resolvePlatformTemplates } from "./templates-root.js";
+export type { TemplateFile } from "./antigravity/index.js";
+
 export type SupportedPlatform = "antigravity" | "codex" | "claude-code" | "all";
 
 export interface PlatformMetadata {
