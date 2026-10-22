@@ -15,6 +15,7 @@
 | v4 | 2026-10-22 | 落地方案 F.4（选项 A）：实现多候选路径 Fail-Fast 资源定位器 `adapters/templates-root.ts`，防范 D-09 静默空安装；新增 `scripts/verify-assets.mjs` 接入 `prepack` 阻断缺件打包；全量测试提升至 91 passed / 3 skipped |
 | v5 | 2026-10-22 | 落地选项 B（方案 F.1 ~ F.3 模板正文 SSOT 重构）：建立 `assets/prompts` 与 `assets/skills` 唯一事实来源；删除 `templates/` 下 18 个冗余文件（消除 100% 文本重复）；实现 `adapters/render.ts` 与 `adapters/types.ts`（彻底解决 R-01, R-02, R-03, R-05）；全量测试提升至 95 passed / 3 skipped |
 | v6 | 2026-10-22 | 代码库深度清理：删除无用死代码 `adapters/templates-root.ts`；清除三平台 adapter 中不可达的 `files.length === 0` 守卫；根目录 `.agents/` 从 Git 索引中剔除并加入 `.gitignore`（R-03 完全闭环）；修复 `npm run verify-assets` 独立运行链；清理全项目无用 import 与变量（`tsc --noUnusedLocals` 全绿） |
+| v7 | 2026-10-22 | 落地方案 E（PRD 措辞全面修订与承诺闭环）：修订 `docs/prd.md` 严格界定 `--force` 权限边界（区分宿主配置零侵入与受管路径显式接管）、补齐各平台真实触发前缀语法（D-10）、补全 `src/` 与 `adapters/` 完整架构树；在 `src/lib/doctor.ts` 增加平台 verified 状态诊断输出并在中英文 README 中如实声明验证矩阵；全量测试提升至 96 passed / 3 skipped 全绿 |
 
 > 本文档为整改执行的**单一依据**。伴随文档保留原文，其独立视角与组织结构仍有参考价值。
 > 本文档在验证过程中**修正了本人 v1 的一处误判**（详见 §8 勘误表），并**修正了伴随文档的一处误判**。
@@ -720,6 +721,7 @@ expect(total).toBeGreaterThan(0);
 | **D** 测试可移植性 | D-07 | ✅ 已实施 |
 | **F.4** 统一资源加载与 Fail-Fast（选项 A） | D-09 | ✅ 已实施（多候选寻址 + 缺失显式抛错 + 空文件集拦截 + prepack 校验） |
 | **F.1 ~ F.3** 模板正文 SSOT 重构（选项 B） | R-01 / R-02 / R-03 / R-05 | ✅ 已实施（Canonical 资产源头 + 动态渲染引擎 + 删除 templates/ 18 个冗余静态副本 + 根目录 .agents/ 构建自动生成） |
+| **E** PRD 措辞修订 | D-05 | ✅ 已实施（锁定宿主零侵入安全底线、各平台触发语法、SSOT 架构及未经验证声明） |
 | —（审查后追加）按平台输出调用前缀 | **D-10** | ✅ 已实施 |
 
 **测试结果：36 failed / 40 passed（76）→ 0 failed / 95 passed / 3 skipped（98）**
@@ -791,8 +793,4 @@ expect(total).toBeGreaterThan(0);
 
 | 方案 | 状态 |
 |---|---|
-| **E** PRD 措辞修订 | 待实施。方案 B 与方案 F 已落定，现在可以改写第 487/463/481/413 条以匹配最终实现 |
-| **R-04 `core/` 538 行定位** | 待产品决策 |
-
-> 注：方案 E 修订时，第 487 条的措辞需按最终实现调整——工具现已**完全不写入**用户配置文件，
-> 比原方案 B 设计的「默认不写、显式授权可写」更严格；第 413 条「核心内容避免重复复制」目标已通过方案 F 达成。
+| **R-04 `core/` 538 行定位** | 待产品决策（确定保留为面向开发者的外向 SDK 工具库，还是精简为纯 Prompt 驱动） |

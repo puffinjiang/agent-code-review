@@ -171,4 +171,14 @@ describe("Global First Installer Lifecycle", () => {
     expect(precedenceCheck).toBeDefined();
     expect(precedenceCheck?.status).toBe("warn");
   });
+
+  it("should report platform verification status in doctor", () => {
+    const report = Doctor.diagnose({ homeDir: tempHome, workspaceRoot: tempWorkspace });
+    const verificationCheck = report.checks.find((c) => c.name === "Platform Verification Status");
+    expect(verificationCheck).toBeDefined();
+    expect(verificationCheck?.status).toBe("warn");
+    expect(verificationCheck?.message).toContain("unverified");
+    expect(report.platformVerification).toBeDefined();
+    expect(report.platformVerification.antigravity.verified).toBe(false);
+  });
 });

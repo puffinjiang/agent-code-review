@@ -107,7 +107,7 @@ V1 不引入额外的 LLM API 服务，不依赖独立的 Claude Code、Codex CL
 实现以下执行流程：
 
 ```text
-/code-review
+/code-review (Antigravity / Claude Code) 或 $code-review (OpenAI Codex)
       |
       v
 1. Git Scope Resolver
@@ -192,14 +192,20 @@ V1 不引入额外的 LLM API 服务，不依赖独立的 Claude Code、Codex CL
 - `branch`：当前分支相对于目标分支
 - `range`：指定提交范围
 
-例如：
+用户调用语法示例（注意各宿主平台的指令前缀差异：Antigravity 与 Claude Code 使用 `/`，OpenAI Codex 使用 `$`）：
 
 ```text
+# Antigravity / Claude Code:
 /code-review
 /code-review HEAD
 /code-review origin/main...HEAD
 /code-review --mode deep
 /code-review --mode quick
+
+# OpenAI Codex:
+$code-review
+$code-review HEAD
+$code-review --mode quick
 ```
 
 这些是目标用户接口，不得直接假定平台原生支持命令参数解析。
@@ -372,7 +378,7 @@ Findings 状态：
 
 ## 十、项目目录
 
-建议采用以下结构，可根据实际实现合理调整：
+采用基于唯一事实来源（SSOT）的清晰分层架构：
 
 ```text
 agent-code-review/
@@ -382,35 +388,67 @@ agent-code-review/
 ├── LICENSE
 ├── .gitignore
 │
-├── src/
-│   ├── cli.ts
-│   ├── commands/
-│   │   ├── init.ts
-│   │   ├── doctor.ts
-│   │   └── uninstall.ts
-│   └── lib/
-│       ├── detect-platform.ts
-│       ├── installer.ts
-│       └── manifest.ts
+├── assets/                          # 唯一事实来源（SSOT Canonical Source）
+│   ├── prompts/                     # 纯 Markdown 正文，无平台专有包装
+│   │   ├── correctness-reviewer.md
+│   │   ├── security-reviewer.md
+│   │   ├── concurrency-reviewer.md
+│   │   ├── performance-reviewer.md
+│   │   └── findings-verifier.md
+│   └── skills/
+│       └── code-review.md           # 核心评审派发与验证规则
 │
-├── core/
-│   ├── agents/
-│   ├── policies/
-│   └── schemas/
-│
-├── adapters/
+├── adapters/                        # 平台适配与动态渲染引擎
+│   ├── index.ts                     # 适配器统一导出与工厂函数
+│   ├── types.ts                     # 平台元数据契约 (PLATFORMS)、角色定义与接口
+│   ├── render.ts                    # 纯正文动态注入 Frontmatter / TOML 包装
+│   ├── assets-root.ts               # Fail-Fast 资产定位与正文加载
+│   ├── normalize-path.ts            # 跨平台 POSIX 路径归一化
 │   ├── antigravity/
-│   ├── codex/
-│   └── claude-code/
+│   │   └── index.ts                 # Google Antigravity 适配器实现
+│   ├── claude-code/
+│   │   └── index.ts                 # Claude Code 适配器实现
+│   └── codex/
+│       └── index.ts                 # OpenAI Codex 适配器实现 (TOML 自动发现)
 │
-├── skills/
-│   └── code-review/
-│       └── SKILL.md
+├── src/
+│   ├── cli.ts                       # CLI 入口与命令路由 (cac)
+│   ├── index.ts                     # 模块导出入口
+│   ├── commands/
+│   │   ├── init.ts                  # init 命令实现 (Scope, 平台选择, 模板写入)
+│   │   ├── doctor.ts                # doctor 诊断命令 (平台环境、清单哈希、验证状态)
+│   │   ├── scope.ts                 # scope 命令 (Git Diff 变更范围解析)
+│   │   └── uninstall.ts             # uninstall 命令 (幂等清理受管文件与叶子目录)
+│   └── lib/
+│       ├── detect-platform.ts       # 检测本地已安装的 AI Coding Agent CLI
+│       ├── doctor.ts                # 诊断核心逻辑 (清单完整性、覆盖关系、验证状态)
+│       ├── installer.ts             # 安装计划生成与执行引擎 (冲突检测、--force 接管)
+│       ├── managed-path.ts          # 受管安全路径解析与公共宿主目录保护
+│       ├── manifest.ts              # .agent-code-review.json 清单与 SHA-256 哈希管理
+│       └── uninstaller.ts           # 卸载引擎 (白名单校验、无残留私有目录清理)
+│
+├── core/                            # 核心业务逻辑 (平台无关)
+│   ├── aggregator/
+│   │   └── aggregator.ts            # 候选缺陷聚合与合并逻辑
+│   ├── git/
+│   │   └── scope.ts                 # Git 变更范围解析 (含未跟踪新增源码文件)
+│   ├── policies/
+│   │   └── modes.ts                 # 评审模式策略定义 (Quick / Standard / Deep)
+│   ├── reporter/
+│   │   └── reporter.ts              # 终版评审报告生成器 (Markdown)
+│   ├── schemas/
+│   │   └── findings.ts              # Finding、ReviewContext 等数据模型规范
+│   └── verifier/
+│       └── verifier.ts              # 独立对抗式验证数据记录辅助工具
+│
+├── scripts/
+│   ├── generate-agents.mjs          # 构建期自动生成本地 .agents/ 产物
+│   └── verify-assets.mjs            # prepack 资产与渲染规范校验卡点
 │
 └── tests/
 ```
 
-核心内容应尽量避免在三个 Adapter 中重复复制，优先由安装器生成或引用共享定义。
+核心内容遵循唯一事实来源（SSOT）原则：Markdown 提示词正文与核心 Skill 集中定义在 `assets/` 中，各 Adapter 仅负责元数据声明并通过动态渲染引擎包装，严禁在适配器间手工复制维护多份静态正文。
 
 ## 十一、CLI 开发、npm 发布与安装管理
 
@@ -460,9 +498,11 @@ npx agent-code-review@latest uninstall
 - init：初始化配置，可交互选择平台。
 - doctor：检查安装状态和配置兼容性。
 - update：安全更新由本项目管理的配置。
-- uninstall：仅删除本项目安装并记录的文件。
+- uninstall：仅删除本项目安装并记录在清单中的文件与私有叶子目录，绝不修改用户配置文件，也绝不递归删除宿主共享配置目录（如 .claude、.codex、.gemini）。
 
-支持 `--yes`、`--dry-run` 和 `--force`，但 `--force` 也不能静默覆盖未纳入本项目管理的用户文件。
+支持 `--yes`、`--dry-run` 和 `--force`。明确区分两类目标对象的安全边界与覆盖规则：
+1. **用户宿主平台配置文件**（如 `~/.codex/config.toml`、`~/.claude/settings.json` 等）：保持严格的零侵入原则，永不修改、追加或截断，`--force` 也不例外；
+2. **本项目受管路径下的文件**（如各平台的 agent 与 skill 目标路径）：默认遇到未受管文件或被用户修改的文件时报告冲突并安全中止；仅当用户显式传入 `--force` 时，才视为获得显式授权进行覆盖并接管纳管。
 
 ### 11.3 跨平台安装
 
@@ -478,14 +518,15 @@ npx agent-code-review@latest uninstall
 - Codex（后续）
 - Claude Code（后续）
 
-安装器应检测目标平台、项目目录及现有配置，并根据经过验证的平台格式生成 Agent 和 Skill 文件。
+安装器应检测目标平台、项目目录及现有配置，并根据平台规范动态渲染生成 Agent 和 Skill 文件。在适配器经过各平台真实运行时长期实测验证前，其 `verified` 元数据必须显式声明为 `false`，并在 CLI（`doctor` 诊断输出 `⚠️ [Platform Verification Status]`）与文档（README 验证状态矩阵）中向用户如实展示，绝不虚假宣传。
 
 ### 11.4 安装安全
 
 必须满足：
 
-1. 不覆盖现有 Agent 配置。
-2. 不删除用户自定义文件。
+1. **用户宿主配置零侵入**：永不修改、追加或覆盖任何已存在的用户宿主配置文件（如 `~/.codex/config.toml`、`~/.claude/settings.json` 等），即便使用 `--force` 也绝不触碰。优先利用宿主平台的原生自动发现机制（如 `~/.codex/agents/*.toml`、`~/.gemini/config/agents/` 等），实现零侵入安装。
+2. **受管文件冲突保护与显式授权接管**：对本项目受管路径下的 agent 和 skill 文件，默认不静默覆盖未受管或已被用户修改的文件；当且仅当用户显式指定 `--force` 时，才允许覆盖并接管纳管。
+3. **卸载目录所有权保护**：不删除用户自定义文件，卸载时仅清理清单中记录的文件与本项目拥有的私有叶子目录，严格保护宿主公共目录所有权，禁止向上递归删除非工具私有的父级目录。
 3. 维护安装清单及文件哈希。
 4. 支持重复初始化且结果一致。
 5. 支持 Dry Run。
@@ -531,11 +572,10 @@ npm pack --dry-run
 npx agent-code-review@latest init
 ```
 
-安装完成后，直接在 Antigravity 中运行：
+安装完成后，直接在相应 AI Coding Agent 平台中启动审查：
 
-```text
-/code-review
-```
+- **Antigravity / Claude Code**：在对话中输入 `/code-review`
+- **OpenAI Codex**：在对话中输入 `$code-review`（或通过 `/skills` 选择）
 
 整个过程不需要独立部署服务、不需要 Python，也不需要申请额外的 AI API Key。
 

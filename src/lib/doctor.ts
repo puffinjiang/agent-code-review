@@ -4,8 +4,8 @@ import * as os from "node:os";
 import { ManifestManager, InstallationManifest } from "./manifest.js";
 import { GitScopeResolver } from "../../core/git/scope.js";
 import { detectPlatforms, DetectedPlatform } from "./detect-platform.js";
-
 import { resolveManagedPath } from "./managed-path.js";
+import { PLATFORMS, PlatformMetadata } from "../../adapters/index.js";
 
 export interface DoctorCheckResult {
   name: string;
@@ -18,6 +18,7 @@ export interface DoctorReport {
   homeDir: string;
   overallHealthy: boolean;
   detectedPlatforms: DetectedPlatform[];
+  platformVerification: Record<string, PlatformMetadata>;
   globalManifest: InstallationManifest | null;
   localManifest: InstallationManifest | null;
   checks: DoctorCheckResult[];
@@ -50,7 +51,21 @@ export class Doctor {
       });
     }
 
-    // Check 2: Global Installation Manifest
+    // Check 2: Platform verification status
+    const platformEntries = Object.values(PLATFORMS);
+    const unverifiedEntries = platformEntries.filter((p) => !p.verified);
+    const verificationSummary = platformEntries
+      .map((p) => `${p.name}: ${p.verified ? "verified" : "unverified"}`)
+      .join(", ");
+    checks.push({
+      name: "Platform Verification Status",
+      status: unverifiedEntries.length > 0 ? "warn" : "pass",
+      message: unverifiedEntries.length === platformEntries.length
+        ? `All platforms are currently unverified in native runtime (review quality not validated): ${verificationSummary}.`
+        : `Platform verification: ${verificationSummary}.`
+    });
+
+    // Check 3: Global Installation Manifest
     const globalManifest = ManifestManager.load(homeDir);
     if (globalManifest) {
       const globalPlatforms = Array.isArray(globalManifest.platforms)
@@ -108,7 +123,7 @@ export class Doctor {
       });
     }
 
-    // Check 3: Local Workspace Configuration
+    // Check 4: Local Workspace Configuration
     const gitResolver = new GitScopeResolver(workspaceRoot);
     const isGit = gitResolver.isGitRepo();
     const localManifest = ManifestManager.load(workspaceRoot);
@@ -146,6 +161,7 @@ export class Doctor {
       homeDir,
       overallHealthy,
       detectedPlatforms: detected,
+      platformVerification: PLATFORMS,
       globalManifest,
       localManifest,
       checks

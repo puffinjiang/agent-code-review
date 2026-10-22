@@ -64,13 +64,20 @@ npx agent-code-review@latest uninstall --local
 
 ---
 
-## Runtime and validation limits
+## Runtime Boundaries & Platform Verification Status
 
 The CLI installs templates, diagnoses file integrity, and resolves Git scopes. The host agent executes the review skill and native delegation; the package does not automatically invoke an LLM. The exported TypeScript aggregator, verifier helper, and reporter are optional data utilities and are not automatically called by the installed skill. `IndependentVerifier` records explicit external evaluation facts; it does not inspect code or prove findings itself. If independent delegation is unavailable, the skill must disclose that limitation.
 
-Codex reviewer files use `name`, `description`, and `developer_instructions`, which is what Codex's `~/.codex/agents/*.toml` auto-discovery requires — no `config.toml` registration. Claude reviewer files include required YAML metadata. The platform verification flags remain false until native runtime smoke tests are recorded.
+### Platform Verification Matrix
 
-Skill invocation differs by platform: type **`$code-review`** in Codex, and **`/code-review`** in Claude Code and Antigravity.
+| Platform | Format & Templates | Verification Status (`verified`) | Command Trigger |
+| :--- | :--- | :--- | :--- |
+| **Google Antigravity** | Implemented (`~/.gemini/config/...`) | ⚠️ **Unverified (`false`)** (Templates & unit tests ready; runtime quality unvalidated) | `/code-review` |
+| **Claude Code** | Implemented (`~/.claude/...`) | ⚠️ **Unverified (`false`)** (YAML metadata aligned; native delegation unvalidated) | `/code-review` |
+| **OpenAI Codex** | Implemented (`~/.codex/agents/*.toml` auto-discovery) | ⚠️ **Unverified (`false`)** (TOML format aligned; auto-discovery unvalidated) | `$code-review` |
+
+> [!IMPORTANT]
+> The `verified` flag for all platforms is strictly set to `false` and transparently reported by `npx agent-code-review doctor`. Flags will only be set to `true` after thorough, recorded testing and review quality validation on actual native host runtimes.
 
 ## 🏛️ Architecture & Workflow
 

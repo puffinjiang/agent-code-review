@@ -66,13 +66,20 @@ npx agent-code-review@latest uninstall --local
 
 ---
 
-## 实际运行边界与验证状态
+## 实际运行边界与平台验证状态
 
 CLI 负责安装模板、检查文件完整性和解析 Git 范围；审查由宿主 Agent 执行 skill 和原生子代理调度。本包不会自动调用 LLM。导出的 TypeScript 聚合器、验证辅助函数和报告器属于可选数据工具，安装后的 skill 不会自动调用它们。`IndependentVerifier` 只记录外部提供的验证事实，不读取代码或自行证明缺陷；无法独立调度时必须明确披露。
 
-Codex 模板使用 `name`、`description` 与 `developer_instructions`，这正是 Codex 自动发现 `~/.codex/agents/*.toml` 所需的字段，无需 `config.toml` 注册；Claude 模板包含必需的 YAML 元数据。平台 `verified` 标记保持 false，直到补充原生运行验证记录。
+### 平台验证状态矩阵
 
-各平台调用方式不同：Codex 中输入 **`$code-review`**，Claude Code 与 Antigravity 中输入 **`/code-review`**。
+| 平台 | 模板与配置格式 | 平台验证状态（`verified`） | 审查启动指令 |
+| :--- | :--- | :--- | :--- |
+| **Google Antigravity** | 已实现（`~/.gemini/config/...`） | ⚠️ **未验证 (`false`)**（模板与单测已就绪，原生真实运行审查质量待实测） | `/code-review` |
+| **Claude Code** | 已实现（`~/.claude/...`） | ⚠️ **未验证 (`false`)**（YAML 格式已对齐，原生子代理调度待实测） | `/code-review` |
+| **OpenAI Codex** | 已实现（`~/.codex/agents/*.toml` 自动发现） | ⚠️ **未验证 (`false`)**（TOML 格式已对齐，零侵入自动发现待实测） | `$code-review` |
+
+> [!IMPORTANT]
+> 当前所有平台的 `verified` 标记均显式保持为 `false`，并在 `npx agent-code-review doctor` 输出中如实展示，绝不夸大宣传。仅在通过各宿主平台真实环境长效运行验证审查质量后，才会将标记置为 `true`。
 
 ## 🏛️ 核心架构与工作流
 
