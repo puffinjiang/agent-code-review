@@ -6,3 +6,4 @@ coverage/
 .temp/
 .agents/
 .agent-code-review.json
+*.tgz
