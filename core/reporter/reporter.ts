@@ -1,4 +1,4 @@
-import { Finding, ReviewReport, ReviewReportSummary, Severity, FindingCategory } from "../schemas/findings.js";
+import { Finding, ReviewReport, ReviewReportSummary } from "../schemas/findings.js";
 
 export class ReviewReporter {
   public static buildSummary(findings: Finding[]): ReviewReportSummary {

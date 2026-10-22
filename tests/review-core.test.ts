@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveReviewPolicy, ALL_REVIEWERS } from "../core/policies/modes.js";
+import { resolveReviewPolicy } from "../core/policies/modes.js";
 import { FindingsAggregator } from "../core/aggregator/aggregator.js";
 import { IndependentVerifier } from "../core/verifier/verifier.js";
 import { ReviewReporter } from "../core/reporter/reporter.js";

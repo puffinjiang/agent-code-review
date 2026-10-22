@@ -1,13 +1,4 @@
----
-name: code-review
-description: Independent specialized code review with adversarial verification. Reports unavailable delegation explicitly.
-user-invocable: true
-allowed-tools: ["Read", "Grep", "Glob", "Bash", "Agent"]
----
-
 # Independent code review
-
-Arguments: $ARGUMENTS
 
 ## Scope and snapshots
 Parse scope separately from `--mode quick|standard|deep`; defaults are uncommitted and standard. Explicit requests for a whole-project audit override the diff default.

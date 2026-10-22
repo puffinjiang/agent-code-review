@@ -10,7 +10,7 @@
   "types": "./dist/index.d.ts",
   "files": [
     "dist",
-    "templates",
+    "assets",
     "docs/reviewer-evaluation.md",
     "README.md",
     "README.zh-CN.md",
@@ -20,12 +20,13 @@
     "node": ">=20.0.0"
   },
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && node scripts/generate-agents.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "prepack": "node scripts/verify-assets.mjs && npm run build",
-    "verify-assets": "node scripts/verify-assets.mjs"
+    "prepack": "npm run build && node scripts/verify-assets.mjs",
+    "verify-assets": "npm run build && node scripts/verify-assets.mjs",
+    "generate:agents": "node scripts/generate-agents.mjs"
   },
   "keywords": [
     "code-review",

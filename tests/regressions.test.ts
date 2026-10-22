@@ -330,6 +330,10 @@ describe("Review safety regressions", () => {
     }
     // 工具私有目录应被清理，不留空文件夹
     expect(fs.existsSync(path.join(root, ".agents"))).toBe(false);
+    for (const role of ["correctness-reviewer", "security-reviewer", "concurrency-reviewer", "performance-reviewer", "findings-verifier"]) {
+      expect(fs.existsSync(path.join(root, ".gemini/config/agents", role)), `${role} 角色目录应被清理`).toBe(false);
+    }
+    expect(fs.existsSync(path.join(root, ".gemini/config/agents")), ".gemini/config/agents 宿主目录应保留").toBe(true);
   });
 
   it("keeps host-owned directories in a local workspace too", () => {

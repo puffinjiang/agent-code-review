@@ -1,5 +1,5 @@
 import { Installer, InstallScope } from "../lib/installer.js";
-import { SupportedPlatform, PLATFORMS } from "../../adapters/index.js";
+import { SupportedPlatform } from "../../adapters/index.js";
 import { detectPlatforms } from "../lib/detect-platform.js";
 
 export interface InitCommandOptions {

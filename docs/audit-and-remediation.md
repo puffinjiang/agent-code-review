@@ -13,6 +13,8 @@
 | v2 | 2026-10-22 | 合入 [`architecture-audit-uninstall-safety-and-redundancy.md`](./architecture-audit-uninstall-safety-and-redundancy.md)（下称「伴随文档」）的互补内容；新增 D-03；勘误 §8；重新编号 |
 | v3 | 2026-10-22 | 收窄 C.1 判据为**目录归属**而非 scope（避免 local scope 下 `.claude`/`.codex` 失去保护）；新增 D-09 与方案 F.4「资源寻址与静默失败防护」 |
 | v4 | 2026-10-22 | 落地方案 F.4（选项 A）：实现多候选路径 Fail-Fast 资源定位器 `adapters/templates-root.ts`，防范 D-09 静默空安装；新增 `scripts/verify-assets.mjs` 接入 `prepack` 阻断缺件打包；全量测试提升至 91 passed / 3 skipped |
+| v5 | 2026-10-22 | 落地选项 B（方案 F.1 ~ F.3 模板正文 SSOT 重构）：建立 `assets/prompts` 与 `assets/skills` 唯一事实来源；删除 `templates/` 下 18 个冗余文件（消除 100% 文本重复）；实现 `adapters/render.ts` 与 `adapters/types.ts`（彻底解决 R-01, R-02, R-03, R-05）；全量测试提升至 95 passed / 3 skipped |
+| v6 | 2026-10-22 | 代码库深度清理：删除无用死代码 `adapters/templates-root.ts`；清除三平台 adapter 中不可达的 `files.length === 0` 守卫；根目录 `.agents/` 从 Git 索引中剔除并加入 `.gitignore`（R-03 完全闭环）；修复 `npm run verify-assets` 独立运行链；清理全项目无用 import 与变量（`tsc --noUnusedLocals` 全绿） |
 
 > 本文档为整改执行的**单一依据**。伴随文档保留原文，其独立视角与组织结构仍有参考价值。
 > 本文档在验证过程中**修正了本人 v1 的一处误判**（详见 §8 勘误表），并**修正了伴随文档的一处误判**。
@@ -31,7 +33,7 @@
 
 **整改后的状态：本工具安装与卸载全程只新建、删除自己创建的目录与文件，不再写入任何已存在的用户配置文件。**
 
-测试现状：Windows 上 **91 通过 / 3 跳过 / 0 失败**（整改前 36 失败）。
+测试现状：Windows 上 **95 通过 / 3 跳过 / 0 失败**（整改前 36 失败）。
 
 ---
 
@@ -708,7 +710,7 @@ expect(total).toBeGreaterThan(0);
 
 ### 9.1 已完成
 
-| 方案 | 缺陷 | 状态 |
+| 方案 | 缺陷/冗余 | 状态 |
 |---|---|---|
 | **A** 路径归一化 | D-01 | ✅ 已实施 |
 | **B** Codex 配置只增不删 | D-02 / D-05 / D-06 | ✅ 已实施（按调研结论简化为删除 config 写入路径） |
@@ -717,9 +719,10 @@ expect(total).toBeGreaterThan(0);
 | **C.3** 平台检测去 shell 拼接 | D-08 | ✅ 已实施 |
 | **D** 测试可移植性 | D-07 | ✅ 已实施 |
 | **F.4** 统一资源加载与 Fail-Fast（选项 A） | D-09 | ✅ 已实施（多候选寻址 + 缺失显式抛错 + 空文件集拦截 + prepack 校验） |
+| **F.1 ~ F.3** 模板正文 SSOT 重构（选项 B） | R-01 / R-02 / R-03 / R-05 | ✅ 已实施（Canonical 资产源头 + 动态渲染引擎 + 删除 templates/ 18 个冗余静态副本 + 根目录 .agents/ 构建自动生成） |
 | —（审查后追加）按平台输出调用前缀 | **D-10** | ✅ 已实施 |
 
-**测试结果：36 failed / 40 passed（76）→ 0 failed / 91 passed / 3 skipped（94）**
+**测试结果：36 failed / 40 passed（76）→ 0 failed / 95 passed / 3 skipped（98）**
 
 3 项跳过为 Windows 平台限制（符号链接需开发者模式、文件名不可含换行与尾随空格），非产品缺陷。
 
@@ -740,30 +743,36 @@ expect(total).toBeGreaterThan(0);
 
 | 文件 | 用途 |
 |---|---|
+| `assets/prompts/*.md` (5个) | Canonical 提示词唯一事实来源，消除 100% 正文冗余（R-01） |
+| `assets/skills/code-review.md` | Canonical Skill 核心正文（R-02） |
+| `adapters/types.ts` | 抽离公共契约类型 `TemplateFile` 与角色元数据（R-05） |
+| `adapters/assets-root.ts` | Canonical 资源定位器与加载器（D-09 / F.4） |
+| `adapters/render.ts` | 三平台动态包装与渲染引擎（F.1） |
 | `adapters/normalize-path.ts` | 产出方路径规范化（D-01） |
-| `adapters/templates-root.ts` | 统一模板与资源根目录探测器（D-09），多级候选探测 + 缺失 Fail-Fast 显式抛错 |
 | `scripts/verify-assets.mjs` | npm 打包前预检脚本，发布前校验平台与 Reviewer 资产完整性 |
-| `.gitattributes` | 固定 `templates/**` 为 LF —— 该目录按 SHA256 管理，CRLF 会导致跨平台哈希不一致 |
+| `scripts/generate-agents.mjs` | 构建期动态生成根目录 `.agents/`，消除静态拷贝维护成本（R-03） |
+| `.gitattributes` | 固定 `assets/**` 为 LF —— 按 SHA256 管理，保持跨平台一致 |
 
-**修改**
+**修改/删除**
 
 | 文件 | 变更 |
 |---|---|
-| `adapters/{antigravity,claude-code,codex}/index.ts` | 统一通过 `resolvePlatformTemplates` 定位资源，并加入文件集非空断言；移除 codex 的 config.toml 产出 |
-| `adapters/index.ts` | 统一导出模板寻址核心函数 `resolveTemplatesRoot` / `resolvePlatformTemplates` 及相关类型 |
-| `templates/codex/config.toml` | **已删除** |
-| `src/lib/installer.ts` | 移除 `append-toml-section` 分支与 `parseToml` 依赖；manifest 重建时退役旧的 `.codex/config.toml` 条目 |
+| `templates/**`（全部 18 个文件） | **已彻底删除**（改由 `assets/` 动态渲染） |
+| `adapters/templates-root.ts` | **已删除**（无用死代码） |
+| `.agents/`（全目录 6 个文件） | **已从 Git 索引移除并加入 `.gitignore`**（纯构建产物，彻底解决 R-03） |
+| `adapters/{antigravity,claude-code,codex}/index.ts` | 统一通过渲染引擎动态产出各平台文件，代码零文件遍历 |
+| `adapters/index.ts` | 统一导出渲染函数、资源定位器及核心契约类型 |
+| `package.json` | `files` 字段由 `templates` 替换为 `assets`，绑定 `build` 自动同步与 `prepack` 校验 |
+| `tsconfig.json` | `exclude` 由 `templates` 替换为 `assets` |
+| `src/lib/installer.ts` | 移除 `append-toml-section` 分支与 `parseToml` 依赖；从 `adapters/index.js` 引用 `TemplateFile` |
 | `src/lib/managed-path.ts` | 补入 `antigravity-cli` 路径；新增 `cleanableDirs` 白名单、`isCleanableDir()`、导出 `LEGACY_SHARED_CONFIG` |
 | `src/lib/uninstaller.ts` | `cleanEmptyParentDirs` 改为按目录归属判定；config 分支改为输出 `manualCleanup` 指引而非写入 |
 | `src/lib/manifest.ts` | `sharedConfig` / `originalContent` 标记为 `@deprecated`，仅容忍读取 |
 | `src/lib/detect-platform.ts` | 移除 `execSync(checkCmd)` 字符串拼接，改为遍历 `PATH`（同时省去每平台三次 spawn） |
 | `src/commands/{init,uninstall}.ts` | 移除 `merge` 动作符号；新增手动清理指引输出 |
-| `package.json` | 绑定 `prepack` 校验（`node scripts/verify-assets.mjs && npm run build`）；`smol-toml` 由 `dependencies` 移至 `devDependencies` |
 | `tests/git-scope.test.ts` | `execSync` 字符串命令 → `execFileSync` 独立参数 |
 | `tests/regressions.test.ts` | 新增 6 项回归测试 + 3 项平台能力跳过；共享配置相关测试改写为新不变量 |
-| `tests/installer.test.ts` | 移除对 `templates/codex/config.toml` 的断言，改为验证自动发现契约 |
-| `tests/template-contracts.test.ts` | 扩充至 29 个测试用例，覆盖路径缺失抛错、空文件集拦截与契约断言 |
-| `templates/**`（19 个） | CRLF → LF |
+| `tests/template-contracts.test.ts` | 扩充至 33 个测试用例，全面覆盖 SSOT 动态渲染规范与资源定位 Fail-Fast |
 
 ### 9.3 新增回归测试
 
@@ -773,17 +782,17 @@ expect(total).toBeGreaterThan(0);
 | `installs and uninstalls cleanly when the Antigravity CLI directory exists` | D-04，含 manifest 必须清除的断言 |
 | `keeps host-owned directories but removes tool-private ones on uninstall` | D-03（global） |
 | `keeps host-owned directories in a local workspace too` | **D-03（local）——防止按 scope 分支实现的回归** |
-| `resolveTemplatesRoot > throws clear actionable error when templates directory cannot be located` | D-09 |
-| `resolvePlatformTemplates > throws if platform directory is missing or empty` | D-09 |
-| `Adapter Template Generation Fail-Fast Guard > fails fast and throws descriptive error if adapter resolves 0 template files` | D-09 |
+| `resolveAssetsRoot > throws clear actionable error when assets directory cannot be located` | D-09 / F.4 |
+| `loads canonical prompt for %s successfully` | R-01 / F.1 |
+| `loads canonical skill successfully` | R-02 / F.1 |
+| `Adapter dynamic rendering contracts for %s (TOML parseable, Claude tools, uncertainty rules)` | F.1 / F.2 |
 
 ### 9.4 未实施
 
 | 方案 | 状态 |
 |---|---|
-| **E** PRD 措辞修订 | 待实施。方案 B 已落定，现在可以改写第 487/463/481 条以匹配最终实现 |
-| **F.1 ~ F.3** 模板正文 SSOT 重构（选项 B） | 消除 18 个模板文件 100% 正文冗余（动态生成 wrapper 代替静态复制） | 待按需推进 |
+| **E** PRD 措辞修订 | 待实施。方案 B 与方案 F 已落定，现在可以改写第 487/463/481/413 条以匹配最终实现 |
 | **R-04 `core/` 538 行定位** | 待产品决策 |
 
 > 注：方案 E 修订时，第 487 条的措辞需按最终实现调整——工具现已**完全不写入**用户配置文件，
-> 比原方案 B 设计的「默认不写、显式授权可写」更严格。
+> 比原方案 B 设计的「默认不写、显式授权可写」更严格；第 413 条「核心内容避免重复复制」目标已通过方案 F 达成。

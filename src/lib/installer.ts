@@ -2,8 +2,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import { ManifestManager, InstallationManifest, ManifestFileEntry } from "./manifest.js";
-import { SupportedPlatform, getAdapter, PLATFORMS } from "../../adapters/index.js";
-import { TemplateFile } from "../../adapters/antigravity/index.js";
+import { SupportedPlatform, getAdapter, TemplateFile } from "../../adapters/index.js";
+
 
 import { resolveManagedPath, LEGACY_SHARED_CONFIG } from "./managed-path.js";
 

@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import { ManifestManager, InstallationManifest } from "./manifest.js";
+import { ManifestManager } from "./manifest.js";
 import { InstallScope } from "./installer.js";
 
 import { resolveManagedPath, isCleanableDir, LEGACY_SHARED_CONFIG } from "./managed-path.js";

@@ -43,9 +43,9 @@ const cleanableDirs = new Set([
   ".claude/skills/code-review",
   ".gemini/config/skills/code-review",
   ".gemini/antigravity-cli/skills/code-review",
-  // Antigravity 的 local 布局为 <role>/agent.md，需逐角色登记，否则空目录会残留
+  // Antigravity 的 agent 布局为 <role>/agent.md（local 为 .agents/agents/<role>，global 为 .gemini/config/agents/<role>）
   ...["correctness-reviewer", "security-reviewer", "concurrency-reviewer", "performance-reviewer", "findings-verifier"]
-    .map((role) => `.agents/agents/${role}`)
+    .flatMap((role) => [`.agents/agents/${role}`, `.gemini/config/agents/${role}`])
 ]);
 
 /** 该相对目录是否允许在卸载时被清理。始终按 POSIX 风格比较。 */

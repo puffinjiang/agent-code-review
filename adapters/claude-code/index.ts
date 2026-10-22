@@ -1,50 +1,35 @@
 import * as path from "node:path";
-import * as fs from "node:fs";
-import { TemplateFile } from "../antigravity/index.js";
 import { toPosixRelativePath } from "../normalize-path.js";
-import { resolvePlatformTemplates } from "../templates-root.js";
+import { TemplateFile, AdapterOptions, REVIEWER_ROLES } from "../types.js";
+import { loadCanonicalPrompt, loadCanonicalSkill } from "../assets-root.js";
+import { renderClaudeAgent, renderClaudeSkill } from "../render.js";
 
 export class ClaudeCodeAdapter {
   public static readonly platformId = "claude-code";
   public static readonly platformName = "Claude Code";
   public static readonly verified = false;
 
-  public static getTemplateFiles(options: {
-    templateRootDir?: string;
-    isGlobal?: boolean;
-    homeDir?: string;
-  } = {}): TemplateFile[] {
-    const root = resolvePlatformTemplates("claude-code", options.templateRootDir);
-
+  public static getTemplateFiles(options: AdapterOptions = {}): TemplateFile[] {
+    const assetsRoot = options.assetsRootDir || options.templateRootDir;
     const files: TemplateFile[] = [];
 
-    // Claude Code uses .claude/skills/code-review/SKILL.md and .claude/agents/
-    const agentsDest = ".claude/agents";
-    const skillsDest = ".claude/skills";
-
-    function collect(dir: string, baseDir: string, destPrefix: string) {
-      if (!fs.existsSync(dir)) return;
-      const entries = fs.readdirSync(dir, { withFileTypes: true });
-      for (const entry of entries) {
-        const fullPath = path.join(dir, entry.name);
-        if (entry.isDirectory()) {
-          collect(fullPath, baseDir, destPrefix);
-        } else if (entry.isFile() && (entry.name.endsWith(".md") || entry.name.endsWith(".json"))) {
-          const relFromBase = path.relative(baseDir, fullPath);
-          files.push({
-            relativePath: toPosixRelativePath(path.join(destPrefix, relFromBase)),
-            sourceContent: fs.readFileSync(fullPath, "utf-8")
-          });
-        }
-      }
+    // 1. 动态生成 5 个 Reviewer agent 定义: .claude/agents/${role}.md
+    for (const role of REVIEWER_ROLES) {
+      const prompt = loadCanonicalPrompt(role, assetsRoot);
+      const rendered = renderClaudeAgent(role, prompt);
+      files.push({
+        relativePath: toPosixRelativePath(path.join(".claude/agents", `${role}.md`)),
+        sourceContent: rendered
+      });
     }
 
-    collect(path.join(root, "agents"), path.join(root, "agents"), agentsDest);
-    collect(path.join(root, "skills"), path.join(root, "skills"), skillsDest);
-
-    if (files.length === 0) {
-      throw new Error(`平台 '${this.platformId}' 模板收集结果为空（搜索根目录: ${root}），请检查模板文件完整性。`);
-    }
+    // 2. 动态生成 code-review Skill 定义: .claude/skills/code-review/SKILL.md
+    const skillBody = loadCanonicalSkill(assetsRoot);
+    const renderedSkill = renderClaudeSkill(skillBody);
+    files.push({
+      relativePath: toPosixRelativePath(".claude/skills/code-review/SKILL.md"),
+      sourceContent: renderedSkill
+    });
 
     return files;
   }
