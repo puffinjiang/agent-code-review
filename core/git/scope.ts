@@ -22,15 +22,17 @@ export interface GitScopeResult {
 
 export class GitScopeResolver {
   private cwd: string;
+  private repoRoot: string | null = null;
 
   constructor(cwd: string = process.cwd()) {
     this.cwd = cwd;
   }
 
-  private runGit(args: string[]): string {
+  private runGit(args: string[], runInRepoRoot: boolean = false): string {
+    const execCwd = runInRepoRoot && this.repoRoot ? this.repoRoot : this.cwd;
     try {
       return execFileSync("git", args, {
-        cwd: this.cwd,
+        cwd: execCwd,
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "pipe"],
         maxBuffer: 10 * 1024 * 1024
@@ -41,10 +43,25 @@ export class GitScopeResolver {
     }
   }
 
+  public getRepoRoot(): string {
+    if (this.repoRoot) return this.repoRoot;
+    try {
+      const root = this.runGit(["rev-parse", "--show-toplevel"]).trim();
+      this.repoRoot = root;
+      return root;
+    } catch {
+      return this.cwd;
+    }
+  }
+
   public isGitRepo(): boolean {
     try {
       const res = this.runGit(["rev-parse", "--is-inside-work-tree"]).trim();
-      return res === "true";
+      if (res === "true") {
+        this.getRepoRoot();
+        return true;
+      }
+      return false;
     } catch {
       return false;
     }
@@ -55,6 +72,7 @@ export class GitScopeResolver {
       throw new Error(`Directory is not a git repository: ${this.cwd}`);
     }
 
+    const repoRoot = this.getRepoRoot();
     const target = options.target || "uncommitted";
     if (target.startsWith("-") || /[\x00-\x20\x7f]/.test(target)) {
       throw new Error("Git target must be a revision or range, not options or whitespace");
@@ -68,9 +86,9 @@ export class GitScopeResolver {
     let baseCommit: string | undefined;
     let headCommit: string | undefined;
 
-    // Detect untracked files
+    // Detect untracked files across entire repository relative to repoRoot
     if (includeUntracked && (target === "uncommitted" || target === "working-tree")) {
-      const untrackedOutput = this.runGit(["ls-files", "--others", "--exclude-standard", "-z"]);
+      const untrackedOutput = this.runGit(["ls-files", "--others", "--exclude-standard", "-z"], true);
       untrackedFiles = untrackedOutput.split("\0").filter(Boolean);
     }
 
@@ -78,24 +96,24 @@ export class GitScopeResolver {
       let hasHead = false;
       let newFiles = [...untrackedFiles];
       try {
-        this.runGit(["rev-parse", "--verify", "HEAD"]);
+        this.runGit(["rev-parse", "--verify", "HEAD"], true);
         hasHead = true;
       } catch {
         hasHead = false;
       }
 
       if (hasHead) {
-        patch = this.runGit(["diff", "HEAD", "--"]);
-        const nameStatus = this.runGit(["diff", "--name-only", "-z", "HEAD", "--"]);
+        patch = this.runGit(["diff", "HEAD", "--"], true);
+        const nameStatus = this.runGit(["diff", "--name-only", "-z", "HEAD", "--"], true);
         if (nameStatus.length > 0) {
           changedFiles = nameStatus.split("\0").filter(Boolean);
         }
       } else {
         // Against an empty initial tree, review the current worktree contents of
         // indexed files too, including edits made after staging.
-        const indexed = this.runGit(["ls-files", "--cached", "-z"]).split("\0").filter(Boolean);
+        const indexed = this.runGit(["ls-files", "--cached", "-z"], true).split("\0").filter(Boolean);
         newFiles = Array.from(new Set([...indexed, ...untrackedFiles])).filter((file) => {
-          try { fs.lstatSync(path.resolve(this.cwd, file)); return true; }
+          try { fs.lstatSync(path.resolve(repoRoot, file)); return true; }
           catch (error) {
             if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
             throw error;
@@ -115,7 +133,7 @@ export class GitScopeResolver {
       if (newFiles.length > 0) {
         const untrackedPatches: string[] = [];
         for (const uf of newFiles) {
-          const fullPath = path.resolve(this.cwd, uf);
+          const fullPath = path.resolve(repoRoot, uf);
           // Never dereference a worktree symlink while collecting review context.
           try {
             const stat = fs.lstatSync(fullPath);
@@ -140,15 +158,15 @@ export class GitScopeResolver {
         }
       }
     } else if (target === "staged") {
-      patch = this.runGit(["diff", "--cached", "--"]);
-      const nameStatus = this.runGit(["diff", "--cached", "--name-only", "-z", "--"]);
+      patch = this.runGit(["diff", "--cached", "--"], true);
+      const nameStatus = this.runGit(["diff", "--cached", "--name-only", "-z", "--"], true);
       if (nameStatus.length > 0) {
         changedFiles = nameStatus.split("\0").filter(Boolean);
       }
     } else if (target.includes("...") || target.includes("..")) {
       // Range comparison e.g. origin/main...HEAD or commitA..commitB
-      patch = this.runGit(["diff", target, "--"]);
-      const nameStatus = this.runGit(["diff", "--name-only", "-z", target, "--"]);
+      patch = this.runGit(["diff", target, "--"], true);
+      const nameStatus = this.runGit(["diff", "--name-only", "-z", target, "--"], true);
       if (nameStatus.length > 0) {
         changedFiles = nameStatus.split("\0").filter(Boolean);
       }
@@ -156,25 +174,25 @@ export class GitScopeResolver {
       // Single commit target (e.g. SHA or HEAD~1)
       try {
         // Check if merge commit (has more than 1 parent)
-        const parents = this.runGit(["rev-list", "--parents", "-n", "1", target]).trim().split(" ");
+        const parents = this.runGit(["rev-list", "--parents", "-n", "1", target], true).trim().split(" ");
         if (parents.length > 2) {
           isMergeCommit = true;
           baseCommit = parents[1];
           // For merge commits, diff against first parent by default and note merge status
-          patch = this.runGit(["diff", `${target}^1`, target, "--"]);
-          const nameStatus = this.runGit(["diff", "--name-only", "-z", `${target}^1`, target, "--"]);
+          patch = this.runGit(["diff", `${target}^1`, target, "--"], true);
+          const nameStatus = this.runGit(["diff", "--name-only", "-z", `${target}^1`, target, "--"], true);
           if (nameStatus.length > 0) {
             changedFiles = Array.from(new Set(nameStatus.split("\0").filter(Boolean)));
           }
         } else {
           baseCommit = parents[1];
-          patch = this.runGit(["show", "--format=", target, "--"]);
-          const nameStatus = this.runGit(["show", "--name-only", "-z", "--format=", target, "--"]);
+          patch = this.runGit(["show", "--format=", target, "--"], true);
+          const nameStatus = this.runGit(["show", "--name-only", "-z", "--format=", target, "--"], true);
           if (nameStatus.length > 0) {
             changedFiles = nameStatus.split("\0").filter(Boolean);
           }
         }
-        headCommit = this.runGit(["rev-parse", "--verify", `${target}^{commit}`]).trim();
+        headCommit = this.runGit(["rev-parse", "--verify", `${target}^{commit}`], true).trim();
       } catch (err: unknown) {
         throw new Error(`Failed to resolve commit target '${target}': ${(err as Error).message}`);
       }

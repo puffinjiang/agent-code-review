@@ -112,4 +112,44 @@ describe("Git Scope Resolver", () => {
     expect(result.isEmpty).toBe(false);
     expect(result.changedFiles).toContain("feat.txt");
   });
+
+  it("should correctly resolve repository-wide scope when executed from a subdirectory", () => {
+    // Commit initial file
+    fs.writeFileSync(path.join(tempDir, "root.txt"), "root line 1\n");
+    git("add", "root.txt");
+    git("commit", "-m", "chore: add root file");
+
+    // Create subdirectories
+    const subA = path.join(tempDir, "sub-a");
+    const subB = path.join(tempDir, "sub-b");
+    fs.mkdirSync(subA, { recursive: true });
+    fs.mkdirSync(subB, { recursive: true });
+
+    // Untracked file in sub-a, tracked change in root, untracked in sub-b
+    fs.writeFileSync(path.join(subA, "tracked-in-a.txt"), "hello\n");
+    git("add", "sub-a/tracked-in-a.txt");
+    git("commit", "-m", "chore: add tracked-in-a");
+
+    // Modifications
+    fs.writeFileSync(path.join(subA, "tracked-in-a.txt"), "hello updated\n");
+    fs.writeFileSync(path.join(subB, "untracked-in-b.txt"), "new file in b\n");
+    fs.writeFileSync(path.join(tempDir, "untracked-in-root.txt"), "new file in root\n");
+
+    // Execute resolver instantiated with subA as cwd
+    const subResolver = new GitScopeResolver(subA);
+    expect(subResolver.isGitRepo()).toBe(true);
+    expect(fs.realpathSync(subResolver.getRepoRoot())).toBe(fs.realpathSync(tempDir));
+
+    const result = subResolver.resolve({ target: "uncommitted" });
+
+    // Assert all files across the repo are collected with normalized paths relative to repoRoot
+    expect(result.changedFiles).toContain("sub-a/tracked-in-a.txt");
+    expect(result.changedFiles).toContain("sub-b/untracked-in-b.txt");
+    expect(result.changedFiles).toContain("untracked-in-root.txt");
+
+    // Verify patch contains repository-relative paths
+    expect(result.patch).toContain('b/sub-a/tracked-in-a.txt');
+    expect(result.patch).toContain('b/sub-b/untracked-in-b.txt');
+    expect(result.patch).toContain('b/untracked-in-root.txt');
+  });
 });

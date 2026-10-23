@@ -80,10 +80,22 @@ export class ManifestManager {
 
   public static save(baseDir: string, manifest: InstallationManifest): void {
     const manifestPath = this.getManifestPath(baseDir);
-    // Restoration metadata may include private user configuration.
-    if (fs.existsSync(manifestPath)) fs.chmodSync(manifestPath, 0o600);
-    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n", { encoding: "utf-8", mode: 0o600 });
-    fs.chmodSync(manifestPath, 0o600);
+    const tmpPath = `${manifestPath}.tmp.${process.pid}.${Date.now()}`;
+    const content = JSON.stringify(manifest, null, 2) + "\n";
+
+    // Write to unique temporary file with restricted permissions first
+    fs.writeFileSync(tmpPath, content, { encoding: "utf-8", mode: 0o600 });
+    fs.chmodSync(tmpPath, 0o600);
+
+    // Atomically replace the target manifest
+    try {
+      fs.renameSync(tmpPath, manifestPath);
+    } catch (err) {
+      if (fs.existsSync(tmpPath)) {
+        try { fs.unlinkSync(tmpPath); } catch {}
+      }
+      throw err;
+    }
   }
 
   public static remove(baseDir: string): boolean {

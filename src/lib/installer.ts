@@ -3,6 +3,7 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { ManifestManager, InstallationManifest, ManifestFileEntry } from "./manifest.js";
 import { SupportedPlatform, getAdapter, TemplateFile } from "../../adapters/index.js";
+import { ProcessLock } from "./lock.js";
 
 
 import { resolveManagedPath, LEGACY_SHARED_CONFIG } from "./managed-path.js";
@@ -170,33 +171,34 @@ export class Installer {
 
   public execute(): InstallResult {
     const baseDir = this.getBaseDir();
-    let items: InstallPlanItem[];
-    let conflicts: string[];
-    try {
-      ({ items, conflicts } = this.plan());
-      resolveManagedPath(baseDir, ".agent-code-review.json");
-    } catch (error) {
-      return { scope: this.scope, baseDir, platforms: this.getTargetPlatforms(), success: false,
-        dryRun: this.dryRun, items: [], manifestSaved: false, errors: [(error as Error).message] };
-    }
-    const targetPlatforms = this.getTargetPlatforms();
-
-    if (conflicts.length > 0) {
-      return {
-        scope: this.scope,
-        baseDir,
-        platforms: targetPlatforms,
-        success: false,
-        dryRun: this.dryRun,
-        items,
-        manifestSaved: false,
-        errors: [
-          `Installation aborted due to ${conflicts.length} conflicting file(s): ${conflicts.join(", ")}; shared configuration conflicts require manual resolution.`
-        ]
-      };
-    }
 
     if (this.dryRun) {
+      let items: InstallPlanItem[];
+      let conflicts: string[];
+      try {
+        ({ items, conflicts } = this.plan());
+        resolveManagedPath(baseDir, ".agent-code-review.json");
+      } catch (error) {
+        return { scope: this.scope, baseDir, platforms: this.getTargetPlatforms(), success: false,
+          dryRun: this.dryRun, items: [], manifestSaved: false, errors: [(error as Error).message] };
+      }
+      const targetPlatforms = this.getTargetPlatforms();
+
+      if (conflicts.length > 0) {
+        return {
+          scope: this.scope,
+          baseDir,
+          platforms: targetPlatforms,
+          success: false,
+          dryRun: this.dryRun,
+          items,
+          manifestSaved: false,
+          errors: [
+            `Installation aborted due to ${conflicts.length} conflicting file(s): ${conflicts.join(", ")}; shared configuration conflicts require manual resolution.`
+          ]
+        };
+      }
+
       return {
         scope: this.scope,
         baseDir,
@@ -209,65 +211,95 @@ export class Installer {
       };
     }
 
-    const now = new Date().toISOString();
-    const existingManifest = ManifestManager.load(baseDir);
-    const manifestFilesMap = new Map<string, ManifestFileEntry>();
-
-    if (existingManifest) {
-      for (const entry of existingManifest.files) {
-        // 早期版本曾把用户的 .codex/config.toml 记入清单。现在 Codex 支持
-        // agents 目录自动发现，注册块不再产生 —— 在下次安装时把这条记录退役，
-        // 避免卸载时反复提示一个早已不再写入的路径。
-        if (entry.path === LEGACY_SHARED_CONFIG) continue;
-        manifestFilesMap.set(entry.path, entry);
+    // Physical installation acquires exclusive process lock on baseDir
+    return ProcessLock.withLock(baseDir, () => {
+      let items: InstallPlanItem[];
+      let conflicts: string[];
+      try {
+        // Re-evaluate plan under lock to incorporate any concurrent installations
+        ({ items, conflicts } = this.plan());
+        resolveManagedPath(baseDir, ".agent-code-review.json");
+      } catch (error) {
+        return { scope: this.scope, baseDir, platforms: this.getTargetPlatforms(), success: false,
+          dryRun: false, items: [], manifestSaved: false, errors: [(error as Error).message] };
       }
-    }
+      const targetPlatforms = this.getTargetPlatforms();
 
-    for (const item of items) {
-      const fullPath = resolveManagedPath(baseDir, item.relativePath);
-      const parentDir = path.dirname(fullPath);
+      if (conflicts.length > 0) {
+        return {
+          scope: this.scope,
+          baseDir,
+          platforms: targetPlatforms,
+          success: false,
+          dryRun: false,
+          items,
+          manifestSaved: false,
+          errors: [
+            `Installation aborted due to ${conflicts.length} conflicting file(s): ${conflicts.join(", ")}; shared configuration conflicts require manual resolution.`
+          ]
+        };
+      }
 
-      if (item.action === "create" || item.action === "update") {
-        if (!fs.existsSync(parentDir)) {
-          fs.mkdirSync(parentDir, { recursive: true });
+      const now = new Date().toISOString();
+      const existingManifest = ManifestManager.load(baseDir);
+      const manifestFilesMap = new Map<string, ManifestFileEntry>();
+
+      if (existingManifest) {
+        for (const entry of existingManifest.files) {
+          // 早期版本曾把用户的 .codex/config.toml 记入清单。现在 Codex 支持
+          // agents 目录自动发现，注册块不再产生 —— 在下次安装时把这条记录退役，
+          // 避免卸载时反复提示一个早已不再写入的路径。
+          if (entry.path === LEGACY_SHARED_CONFIG) continue;
+          manifestFilesMap.set(entry.path, entry);
+        }
+      }
+
+      for (const item of items) {
+        const fullPath = resolveManagedPath(baseDir, item.relativePath);
+        const parentDir = path.dirname(fullPath);
+
+        if (item.action === "create" || item.action === "update") {
+          if (!fs.existsSync(parentDir)) {
+            fs.mkdirSync(parentDir, { recursive: true });
+          }
+
+          fs.writeFileSync(fullPath, item.sourceContent, "utf-8");
         }
 
-        fs.writeFileSync(fullPath, item.sourceContent, "utf-8");
+        manifestFilesMap.set(item.relativePath, {
+          path: item.relativePath,
+          hash: item.hash,
+          platform: item.platform,
+          installedAt: now
+        });
       }
 
-      manifestFilesMap.set(item.relativePath, {
-        path: item.relativePath,
-        hash: item.hash,
-        platform: item.platform,
-        installedAt: now
-      });
-    }
+      const combinedPlatforms = Array.from(
+        new Set([...(existingManifest?.platforms || []), ...targetPlatforms])
+      );
 
-    const combinedPlatforms = Array.from(
-      new Set([...(existingManifest?.platforms || []), ...targetPlatforms])
-    );
+      const manifest: InstallationManifest = {
+        schemaVersion: "1.0.0",
+        packageVersion: "0.1.0",
+        scope: this.scope,
+        platforms: combinedPlatforms,
+        installedAt: existingManifest?.installedAt || now,
+        updatedAt: now,
+        files: Array.from(manifestFilesMap.values())
+      };
 
-    const manifest: InstallationManifest = {
-      schemaVersion: "1.0.0",
-      packageVersion: "0.1.0",
-      scope: this.scope,
-      platforms: combinedPlatforms,
-      installedAt: existingManifest?.installedAt || now,
-      updatedAt: now,
-      files: Array.from(manifestFilesMap.values())
-    };
+      ManifestManager.save(baseDir, manifest);
 
-    ManifestManager.save(baseDir, manifest);
-
-    return {
-      scope: this.scope,
-      baseDir,
-      platforms: combinedPlatforms,
-      success: true,
-      dryRun: false,
-      items,
-      manifestSaved: true,
-      errors: []
-    };
+      return {
+        scope: this.scope,
+        baseDir,
+        platforms: combinedPlatforms,
+        success: true,
+        dryRun: false,
+        items,
+        manifestSaved: true,
+        errors: []
+      };
+    });
   }
 }

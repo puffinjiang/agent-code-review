@@ -7,6 +7,8 @@ export interface UninstallCommandOptions {
   local?: boolean;
   dryRun?: boolean;
   force?: boolean;
+  homeDir?: string;
+  workspaceRoot?: string;
 }
 
 export function runUninstall(options: UninstallCommandOptions = {}): number {
@@ -20,7 +22,9 @@ export function runUninstall(options: UninstallCommandOptions = {}): number {
   const uninstaller = new Uninstaller({
     scope,
     dryRun: options.dryRun,
-    force: options.force
+    force: options.force,
+    homeDir: options.homeDir,
+    workspaceRoot: options.workspaceRoot
   });
 
   const result = uninstaller.execute();

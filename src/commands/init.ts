@@ -9,6 +9,8 @@ export interface InitCommandOptions {
   dryRun?: boolean;
   force?: boolean;
   yes?: boolean;
+  homeDir?: string;
+  workspaceRoot?: string;
 }
 
 export function runInit(options: InitCommandOptions = {}): number {
@@ -19,7 +21,7 @@ export function runInit(options: InitCommandOptions = {}): number {
 
   if (!platform) {
     // Platform detection
-    const detected = detectPlatforms();
+    const detected = detectPlatforms(options.homeDir);
     const active = detected.filter((d) => d.detected);
 
     if (active.length === 1) {
@@ -51,7 +53,9 @@ export function runInit(options: InitCommandOptions = {}): number {
     scope,
     platform,
     dryRun: options.dryRun,
-    force: options.force
+    force: options.force,
+    homeDir: options.homeDir,
+    workspaceRoot: options.workspaceRoot
   });
 
   const result = installer.execute();

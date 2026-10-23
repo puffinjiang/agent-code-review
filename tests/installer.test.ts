@@ -182,4 +182,39 @@ describe("Global First Installer Lifecycle", () => {
     expect(report.platformVerification).toBeDefined();
     expect(report.platformVerification.antigravity.verified).toBe(false);
   });
+
+  it("should safely merge manifest records when multiple platforms are installed in succession or concurrently", () => {
+    const claudeInstaller = new Installer({
+      homeDir: tempHome,
+      scope: "global",
+      platform: "claude-code"
+    });
+    const codexInstaller = new Installer({
+      homeDir: tempHome,
+      scope: "global",
+      platform: "codex"
+    });
+
+    // Run both installations
+    const resA = claudeInstaller.execute();
+    const resB = codexInstaller.execute();
+
+    expect(resA.success).toBe(true);
+    expect(resB.success).toBe(true);
+
+    const manifest = ManifestManager.load(tempHome);
+    expect(manifest).not.toBeNull();
+    // Both platforms must be present in manifest.platforms
+    expect(manifest?.platforms).toContain("claude-code");
+    expect(manifest?.platforms).toContain("codex");
+
+    // Both platforms' files must be present
+    const platformsInFiles = manifest!.files.map((f) => f.platform);
+    expect(platformsInFiles).toContain("claude-code");
+    expect(platformsInFiles).toContain("codex");
+
+    // Verify files on disk
+    expect(fs.existsSync(path.join(tempHome, ".claude/skills/code-review/SKILL.md"))).toBe(true);
+    expect(fs.existsSync(path.join(tempHome, ".agents/skills/code-review/SKILL.md"))).toBe(true);
+  });
 });

@@ -824,3 +824,12 @@ expect(total).toBeGreaterThan(0);
 **变异测试验证**：从 `assets/skills/code-review.md` 删除 `Standard:` 中的 `concurrency-reviewer` 后，新断言立即失败；还原后恢复通过。证明断言守护的是真正发布给用户的内容，而非同仓库的影子副本。
 
 **结果**：`dist/index.js` 15725 B → **1030 B**（-93%）；测试 96 → **83**（减少 13 例影子实现的自检，新增 4 例核心产物级守护断言，4 例 schema 边界用例收敛至 `findings.test.ts`）。`install` / `scope` / `uninstall` 端到端复测通过，用户 `config.toml` 字节级未变。
+
+### 9.6 深度缺陷闭环：D-11 ~ D-13（2026-10-23）
+
+| 缺陷编号 | 现象与影响 | 根因与调用链 | 修复方案与验证 |
+|---|---|---|---|
+| **D-11** | Windows 测试可能误操作真实用户目录 | Node.js `os.homedir()` 在 Windows 优先读取 `USERPROFILE`/`HOMEPATH`，`tests/cli.test.ts` 仅修改 `process.env.HOME` 无法重定向主目录，导致测试执行真实全局卸载 | 命令处理器接受显式参数注入；单测环境全面重定向 Windows 与 POSIX 环境变量（`USERPROFILE`, `HOMEDRIVE`, `HOMEPATH`, `HOME`） |
+| **D-12** | 仓库子目录执行 `scope` 路径基准混用并漏收未跟踪文件 | `GitScopeResolver` 原本仅在调用者的 `cwd` 执行 `git ls-files`，在子目录下漏审父级与其他目录的未跟踪文件，且生成的 patch 路径基准分裂 | 引入 `getRepoRoot()`（`rev-parse --show-toplevel`），统一所有 Git 操作及 patch 生成基准于仓库根，并补全跨目录单测验证 |
+| **D-13** | 并发安装不同平台会丢失清单记录 (TOCTOU) | 多个安装进程同时执行时，Read-Modify-Write 缺少互斥保护，后写者覆盖前者导致卸载遗留孤儿文件 | 引入跨进程文件排他锁 `ProcessLock`（`src/lib/lock.ts`，支持超时与僵尸 PID 恢复），`ManifestManager.save` 改为临时文件原子 rename 替换，全套测试（92 passed）通过 |
+
