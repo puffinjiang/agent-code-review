@@ -118,6 +118,18 @@ export function validateFinding(finding: unknown): { valid: boolean; errors: str
     if (typeof f.verification.tests_executed !== "boolean") {
       errors.push("verification.tests_executed must be a boolean");
     }
+    if (f.verification.notes !== undefined && typeof f.verification.notes !== "string") {
+      errors.push("verification.notes must be a string when provided");
+    }
+    if (f.verification.counter_evidence !== undefined && typeof f.verification.counter_evidence !== "string") {
+      errors.push("verification.counter_evidence must be a string when provided");
+    }
+    if (
+      f.status === "REJECTED" &&
+      (typeof f.verification.counter_evidence !== "string" || f.verification.counter_evidence.trim().length === 0)
+    ) {
+      errors.push("verification.counter_evidence is required when status is REJECTED");
+    }
   }
 
   return {

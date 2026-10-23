@@ -55,8 +55,23 @@ describe("Findings Schema Validation", () => {
     { evidence: [42] },
     { start_line: NaN },
     { end_line: Infinity },
-    { verification: { method: "invented", tests_executed: false } }
+    { verification: { method: "invented", tests_executed: false } },
+    { status: "REJECTED", verification: { method: "trace", tests_executed: false } },
+    { status: "REJECTED", verification: { method: "trace", tests_executed: false, counter_evidence: "   " } }
   ])("should reject invalid protocol data: %j", (invalid) => {
     expect(validateFinding({ ...validFinding, ...invalid } as any).valid).toBe(false);
+  });
+
+  it("should accept REJECTED finding when counter_evidence is provided", () => {
+    const rejected: Finding = {
+      ...validFinding,
+      status: "REJECTED",
+      verification: {
+        method: "trace",
+        tests_executed: false,
+        counter_evidence: "Middleware requireActiveUser already filters deleted_at IS NULL at src/middleware/auth.ts:28."
+      }
+    };
+    expect(validateFinding(rejected)).toEqual({ valid: true, errors: [] });
   });
 });

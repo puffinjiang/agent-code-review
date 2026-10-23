@@ -45,19 +45,24 @@ export type ReviewerRole = (typeof REVIEWER_ROLES)[number];
 
 export const REVIEWER_METADATA: Record<ReviewerRole, { description: string }> = {
   "concurrency-reviewer": {
-    description: "Specialized subagent for detecting race conditions, TOCTOU, idempotency flaws, duplicate event processing, and async blocking."
+    description:
+      "Specialized subagent for detecting race conditions, TOCTOU, idempotency flaws, duplicate event processing, lock/synchronization flaws, and non-atomic state transitions."
   },
   "correctness-reviewer": {
-    description: "Specialized subagent for reviewing business logic correctness, edge cases, state transitions, null handling, and regression risks."
+    description:
+      "Specialized subagent for reviewing business logic correctness, edge cases, state transitions, null handling, error propagation, and regression risks."
   },
   "findings-verifier": {
-    description: "Independent Findings Verifier: Adversarially challenges, traces code paths, verifies counter-evidence, and validates candidate findings."
+    description:
+      "Independent Findings Verifier: Adversarially challenges, traces code paths, verifies counter-evidence, and validates candidate findings."
   },
   "performance-reviewer": {
-    description: "Specialized subagent for analyzing N+1 queries, unindexed queries, blocking I/O, memory leaks, and unbounded loops."
+    description:
+      "Specialized subagent for analyzing N+1 queries, unindexed queries, blocking I/O, repeated subprocess spawning, memory leaks, and unbounded loops."
   },
   "security-reviewer": {
-    description: "Specialized subagent for auditing authentication, authorization, IDOR, tenant isolation, injections, SSRF, and sensitive data leakage."
+    description:
+      "Specialized subagent for auditing authentication, authorization, IDOR, trust-boundary isolation, injections, symlink/file hazards, SSRF, and sensitive data leakage."
   }
 };
 

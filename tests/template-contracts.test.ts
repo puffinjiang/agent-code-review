@@ -15,6 +15,45 @@ const roles = [
   "findings-verifier"
 ] as const;
 
+function parseSimpleYamlFrontmatter(markdown: string): { fields: Record<string, string | string[]>; body: string } {
+  const match = markdown.match(/^---\n([\s\S]*?)\n---\n\n([\s\S]*)$/);
+  expect(match, "Markdown 文件必须包含标准 --- 包裹的 YAML frontmatter 与正文").not.toBeNull();
+  const [, rawYaml, body] = match!;
+  const fields: Record<string, string | string[]> = {};
+  const lines = rawYaml.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const kv = line.match(/^([a-zA-Z0-9_-]+):\s*(.*)$/);
+    expect(kv, `无法解析的 YAML 行: ${line}`).not.toBeNull();
+    const [, key, rawVal] = kv!;
+    if (rawVal === ">-") {
+      const folded: string[] = [];
+      while (i + 1 < lines.length && lines[i + 1].startsWith("  ")) {
+        i++;
+        folded.push(lines[i].slice(2));
+      }
+      expect(folded.length, `字段 ${key} 使用 >- 时必须包含缩进内容行`).toBeGreaterThan(0);
+      fields[key] = folded.join(" ").trim();
+    } else if (rawVal === "") {
+      const listItems: string[] = [];
+      while (i + 1 < lines.length && /^\s*-\s+\S/.test(lines[i + 1])) {
+        i++;
+        listItems.push(lines[i].replace(/^\s*-\s+/, "").replace(/^["']|["']$/g, "").trim());
+      }
+      expect(listItems.length, `字段 ${key} 为空值时必须跟随 YAML 块列表项`).toBeGreaterThan(0);
+      fields[key] = listItems;
+    } else if (rawVal.startsWith("[") && rawVal.endsWith("]")) {
+      const inner = rawVal.slice(1, -1).trim();
+      fields[key] = inner
+        ? inner.split(",").map((item) => item.trim().replace(/^["']|["']$/g, ""))
+        : [];
+    } else {
+      fields[key] = rawVal.trim();
+    }
+  }
+  return { fields, body };
+}
+
 describe("Installable reviewer contracts (SSOT dynamic rendering)", () => {
   it.each(roles)("registers a parseable Codex role and instruction layer: %s", (role) => {
     // Codex 通过 ~/.codex/agents/*.toml 与 .codex/agents/*.toml 自动发现角色，
@@ -37,10 +76,29 @@ describe("Installable reviewer contracts (SSOT dynamic rendering)", () => {
     const agentFile = files.find((f) => f.relativePath === `.claude/agents/${role}.md`);
     expect(agentFile, `缺少 Claude agent 文件: ${role}`).toBeDefined();
 
-    const agent = agentFile!.sourceContent;
-    expect(agent).toMatch(new RegExp(`^---\\nname: ${role}\\n`));
-    expect(agent).toMatch(/\ndescription: >-\n  \S/);
-    expect(agent).toMatch(/\ntools: Read, Grep, Glob, Bash\n---\n/);
+    const { fields, body } = parseSimpleYamlFrontmatter(agentFile!.sourceContent);
+    expect(Object.keys(fields)).toEqual(["name", "description", "tools"]);
+    expect(fields.name).toBe(role);
+    expect(fields.description.length).toBeGreaterThan(10);
+    expect(fields.tools).toBe("Read, Grep, Glob, Bash");
+    expect(body.startsWith("# ")).toBe(true);
+  });
+
+  it.each(roles)("provides required Antigravity frontmatter: %s", (role) => {
+    const globalFiles = getAdapter("antigravity").getTemplateFiles({ isGlobal: true });
+    const globalAgentFile = globalFiles.find((f) => f.relativePath === `.gemini/config/agents/${role}/agent.md`);
+    expect(globalAgentFile, `缺少 Antigravity 全局 agent 文件: ${role}`).toBeDefined();
+
+    const localFiles = getAdapter("antigravity").getTemplateFiles({ isGlobal: false });
+    const localAgentFile = localFiles.find((f) => f.relativePath === `.agents/agents/${role}/agent.md`);
+    expect(localAgentFile, `缺少 Antigravity 本地 agent 文件: ${role}`).toBeDefined();
+    expect(localAgentFile!.sourceContent).toBe(globalAgentFile!.sourceContent);
+
+    const { fields, body } = parseSimpleYamlFrontmatter(globalAgentFile!.sourceContent);
+    expect(Object.keys(fields)).toEqual(["name", "description"]);
+    expect(fields.name).toBe(role);
+    expect(fields.description.length).toBeGreaterThan(10);
+    expect(body.startsWith("# ")).toBe(true);
   });
 
   it.each(["antigravity", "claude-code", "codex"] as const)(
@@ -55,12 +113,75 @@ describe("Installable reviewer contracts (SSOT dynamic rendering)", () => {
 
         const raw = agentFile!.sourceContent;
         const instructions = platform === "codex" ? (parse(raw).developer_instructions as string) : raw;
-        const example = JSON.parse(instructions.match(/```json\n([\s\S]*?)\n```/)![1]);
-        expect(validateFinding(example[0])).toEqual({ valid: true, errors: [] });
+        const jsonBlocks = Array.from(instructions.matchAll(/```json\n([\s\S]*?)\n```/g));
+        expect(jsonBlocks).toHaveLength(1);
+        const examples = JSON.parse(jsonBlocks[0][1]);
+        expect(Array.isArray(examples)).toBe(true);
+        expect(examples.length).toBeGreaterThan(0);
+        const repoRoot = path.resolve(resolveAssetsRoot(), "..");
+        for (const item of examples) {
+          expect(validateFinding(item)).toEqual({ valid: true, errors: [] });
+          // 示例必须使用中立的 example/ 虚构路径，不得指向本仓库真实存在的文件或目录前缀
+          expect(item.file.startsWith("example/")).toBe(true);
+          expect(fs.existsSync(path.resolve(repoRoot, item.file))).toBe(false);
+          if (item.root_cause_key !== undefined) {
+            const esc = item.file.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            expect(item.root_cause_key).toMatch(new RegExp(`^${esc}:[^:]+:[^:]+$`));
+          }
+          // 静态分析未运行测试时，不得在 impact 中编造具体耗时数值
+          if (!item.verification.tests_executed) {
+            expect(item.impact).not.toMatch(/\b\d+(\.\d+)?\s*(ms|s|sec|seconds?|minutes?)\b/i);
+          }
+        }
+
+        if (role === "concurrency-reviewer") {
+          expect(examples[0].recommendation).not.toMatch(/roll\s*back/i);
+        }
+
+        if (role === "findings-verifier") {
+          expect(examples.map((item: { status: string }) => item.status)).toEqual([
+            "CONFIRMED",
+            "REJECTED",
+            "NEEDS_VERIFICATION"
+          ]);
+          expect(examples[0].verification).not.toHaveProperty("counter_evidence");
+          expect(examples[1].verification.counter_evidence).toBeTypeOf("string");
+          expect(examples[2].verification.notes).toBeTypeOf("string");
+        } else {
+          const expectedCategory = role.replace("-reviewer", "");
+          expect(examples[0].category).toBe(expectedCategory);
+          expect(examples[0].status).toBe("NEEDS_VERIFICATION");
+        }
+
         expect(instructions).toContain("Internal jobs");
         expect(instructions).toContain("Candidate reviewers always use NEEDS_VERIFICATION");
         expect(instructions).toContain("tests actually ran");
+        expect(instructions).toContain("primary mechanism");
+        expect(instructions).toContain("final response is the sole authoritative result");
+        expect(instructions).toContain("intermediate messages");
         expect(instructions).not.toContain("reachable by an external caller or malicious actor");
+      }
+    }
+  );
+
+  it.each(["antigravity", "claude-code", "codex"] as const)(
+    "provides required %s skill frontmatter",
+    (platform) => {
+      const files = getAdapter(platform).getTemplateFiles({ isGlobal: true });
+      const skillFile = files.find((f) => f.relativePath.endsWith("skills/code-review/SKILL.md"));
+      expect(skillFile, `未找到 ${platform} 的 SKILL.md`).toBeDefined();
+
+      const { fields, body } = parseSimpleYamlFrontmatter(skillFile!.sourceContent);
+      expect(fields.name).toBe("code-review");
+      expect(typeof fields.description === "string" && fields.description.length > 10).toBe(true);
+      expect(body.startsWith("# Independent code review")).toBe(true);
+
+      if (platform === "claude-code") {
+        expect(Object.keys(fields)).toEqual(["name", "description", "user-invocable", "allowed-tools"]);
+        expect(fields["user-invocable"]).toBe("true");
+        expect(fields["allowed-tools"]).toEqual(["Read", "Grep", "Glob", "Bash", "Agent"]);
+      } else {
+        expect(Object.keys(fields)).toEqual(["name", "description"]);
       }
     }
   );
@@ -77,7 +198,6 @@ describe("Installable reviewer contracts (SSOT dynamic rendering)", () => {
       expect(skill).toContain("separate findings-verifier");
       expect(skill).toContain("single-agent fallback must be labeled");
       expect(skill).toContain("Quick: correctness-reviewer only");
-      if (platform === "claude-code") expect(skill).toMatch(/allowed-tools:.*"Agent"/);
     }
   );
 
@@ -104,6 +224,7 @@ describe("Installable reviewer contracts (SSOT dynamic rendering)", () => {
       expect(skill, `${platform} 应要求按 root cause + trigger 合并`).toMatch(/[Mm]erge only when the root cause and trigger/);
       expect(skill).toMatch(/Retain different triggers and file locations separately/);
       expect(skill).toMatch(/highest supported severity/);
+      expect(skill).toContain("sole authoritative result");
     }
   });
 

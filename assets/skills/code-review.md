@@ -19,7 +19,7 @@ Launch each selected reviewer as an independent native subagent; do not merely a
 Respect the session's concurrency limit: launch in bounded batches and wait for results before releasing slots or launching the verifier. Reviewers must independently inspect source and return the Finding JSON protocol defined in their own instructions. If delegation or a registered role is unavailable, explicitly report the missing capability. A single-agent fallback must be labeled as such and must not claim independent review or verification.
 
 ## Aggregate candidates
-Validate that returned findings include trigger, impact, exact location, evidence, status, origin, and verification metadata. Return malformed output to its reviewer for correction; do not fabricate missing evidence. Candidates have status NEEDS_VERIFICATION.
+Treat each subagent's final response as its sole authoritative result containing all findings; ignore intermediate progress, context requests, or status messages when collecting findings. Validate that returned findings include trigger, impact, exact location, evidence, status, origin, and verification metadata. Return malformed output to its reviewer for correction; do not fabricate missing evidence. Candidates have status NEEDS_VERIFICATION.
 Merge only when the root cause and trigger are established to be the same. Nearby or overlapping lines and generic labels are insufficient. Retain different triggers and file locations separately. Preserve evidence and use the highest supported severity, not automatically the most alarmist claim.
 
 ## Independent verification
