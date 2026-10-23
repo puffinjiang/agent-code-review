@@ -1,0 +1,64 @@
+{
+  "name": "agent-code-review",
+  "version": "0.1.0",
+  "description": "An open-source multi-agent code review framework for AI coding agents.",
+  "type": "module",
+  "bin": {
+    "agent-code-review": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "assets",
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "build": "tsup && node scripts/generate-agents.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "prepack": "npm run build && node scripts/verify-assets.mjs",
+    "prepublishOnly": "npm test",
+    "verify-assets": "npm run build && node scripts/verify-assets.mjs",
+    "generate:agents": "node scripts/generate-agents.mjs"
+  },
+  "keywords": [
+    "code-review",
+    "ai-agent",
+    "antigravity",
+    "claude-code",
+    "codex",
+    "multi-agent",
+    "quality",
+    "git"
+  ],
+  "author": "Puffin",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/puffinjiang/agent-code-review.git"
+  },
+  "homepage": "https://github.com/puffinjiang/agent-code-review#readme",
+  "bugs": {
+    "url": "https://github.com/puffinjiang/agent-code-review/issues"
+  },
+  "dependencies": {
+    "commander": "^13.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "smol-toml": "^1.9.1",
+    "tsup": "^8.3.6",
+    "typescript": "^5.7.3",
+    "vitest": "^5.0.5"
+  },
+  "overrides": {
+    "esbuild": "^0.28.2"
+  }
+}
