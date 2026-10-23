@@ -44,6 +44,13 @@ npx agent-code-review@latest init --dry-run
 # 环境诊断检查（同时扫描全局与本地配置）
 npx agent-code-review@latest doctor
 
+# 将已安装配置更新至最新模板版本
+npx agent-code-review@latest update
+
+# 查看解析后的 Git Diff 范围（支持未提交、staged、指定 Commit 或分支范围）
+npx agent-code-review@latest scope
+npx agent-code-review@latest scope staged --json
+
 # 安全卸载（仅安全清理未被用户修改的管理文件）
 npx agent-code-review@latest uninstall
 npx agent-code-review@latest uninstall --local
@@ -94,10 +101,10 @@ CLI 负责安装模板、检查文件完整性和解析 Git 范围；审查由�
        │
        ▼
  3. 独立专业 Reviewer
-       ├── Correctness Reviewer（业务逻辑、边界条件、状态机、软删除等）
-       ├── Security Reviewer（认证、鉴权、IDOR 越权、SQL 注入、SSRF 等）
-       ├── Concurrency Reviewer（竞态条件、TOCTOU、幂等性、重复消息处理等）
-       └── Performance Reviewer（N+1 查询、缺失索引、阻塞 I/O 等）
+       ├── Correctness Reviewer（业务逻辑、边界条件、状态转换、异常传播、跨平台语义等）
+       ├── Security Reviewer（认证鉴权、IDOR、信任边界、SQL/命令/选项注入、软链与文件风险、SSRF 等）
+       ├── Concurrency Reviewer（竞态条件、TOCTOU、文件锁与同步缺陷、幂等性、非原子状态变更等）
+       └── Performance Reviewer（N+1 查询、缺失索引、阻塞 I/O、循环派生子进程、无界遍历等）
        │
        ▼
  4. Findings Aggregator（按根因聚类、合并多角度证据、提炼最高严重度）
@@ -178,14 +185,14 @@ npm pack --dry-run
 ```
 
 包含测试覆盖：
-1. Global First 安装生命周期、跨平台路径与主目录隔离。
+1. Global First 与项目级安装/卸载生命周期、跨平台路径与主目录隔离。
 2. 跨平台路径归一化，以及宿主目录（`.claude` / `.codex` / `.gemini`）的删除保护与工具私有目录清理。
-3. Git Diff 范围解析（未提交变更、暂存区、提交范围、Merge Commit 处理、未跟踪新增文件与空 Diff 场景）。
-4. Findings 去重与多来源证据合并算法。
-5. 外部验证结果判定辅助函数（CONFIRMED / REJECTED / NEEDS_VERIFICATION）。
-6. 命令注入、符号链接、路径穿越、配置保护、保守验证与不同根因保留的回归测试。
+3. 跨进程文件锁（`ProcessLock`）互斥、防符号链接跟随与清单（Manifest）原子持久化。
+4. Git Diff 范围解析（未提交变更、暂存区、提交范围、附注标签、Merge Commit、子目录执行、未跟踪新增文件与空 Diff 场景）。
+5. SSOT 提示词与 Skill 动态渲染、三平台 Frontmatter 结构校验与 Finding JSON 协议契约测试。
+6. Git 参数/命令注入、符号链接、路径穿越、用户配置保护、对抗验证与聚合规则契约的回归测试。
 
-缺陷 fixture 和手写 finding 测试不代表模型检出能力。三个平台的原生 agent 发现、端到端调度、检出率和误报率仍待验证，见[评估流程](docs/reviewer-evaluation.md)。
+单元与契约测试仅验证安装器安全性、Git 范围解析与提示词/Schema 契约，不代表大模型的实际缺陷检出能力。三个平台的原生 agent 发现、端到端调度、检出率和误报率仍待验证。
 
 ---
 

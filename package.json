@@ -11,7 +11,6 @@
   "files": [
     "dist",
     "assets",
-    "docs/reviewer-evaluation.md",
     "README.md",
     "README.zh-CN.md",
     "LICENSE"
@@ -25,6 +24,7 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "prepack": "npm run build && node scripts/verify-assets.mjs",
+    "prepublishOnly": "npm test",
     "verify-assets": "npm run build && node scripts/verify-assets.mjs",
     "generate:agents": "node scripts/generate-agents.mjs"
   },
@@ -32,6 +32,8 @@
     "code-review",
     "ai-agent",
     "antigravity",
+    "claude-code",
+    "codex",
     "multi-agent",
     "quality",
     "git"
@@ -40,7 +42,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/puffin/agent-code-review.git"
+    "url": "https://github.com/puffinjiang/agent-code-review.git"
+  },
+  "homepage": "https://github.com/puffinjiang/agent-code-review#readme",
+  "bugs": {
+    "url": "https://github.com/puffinjiang/agent-code-review/issues"
   },
   "dependencies": {
     "commander": "^13.1.0"

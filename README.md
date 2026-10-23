@@ -42,6 +42,13 @@ npx agent-code-review@latest init --dry-run
 # Run diagnostic health check on global & local configurations
 npx agent-code-review@latest doctor
 
+# Update installed configuration to the latest template version
+npx agent-code-review@latest update
+
+# Inspect resolved Git diff scope (uncommitted, staged, commit SHA, or range)
+npx agent-code-review@latest scope
+npx agent-code-review@latest scope staged --json
+
 # Safely uninstall (removes only managed, unedited files)
 npx agent-code-review@latest uninstall
 npx agent-code-review@latest uninstall --local
@@ -92,10 +99,10 @@ The CLI installs templates, diagnoses file integrity, and resolves Git scopes. T
        │
        ▼
  3. Independent Specialized Reviewers
-       ├── Correctness Reviewer (logic, edge cases, state machines, soft-deletes)
-       ├── Security Reviewer (authz/authn, IDOR, SQLi, SSRF, injection)
-       ├── Concurrency Reviewer (race conditions, TOCTOU, idempotency, lost updates)
-       └── Performance Reviewer (N+1 queries, unindexed filters, blocking I/O)
+       ├── Correctness Reviewer (logic, edge cases, state transitions, error propagation, cross-platform semantics)
+       ├── Security Reviewer (authn/authz, IDOR, trust boundaries, SQL/command/option injection, symlink/file hazards, SSRF)
+       ├── Concurrency Reviewer (race conditions, TOCTOU, lock/synchronization flaws, idempotency, non-atomic state transitions)
+       └── Performance Reviewer (N+1 queries, unindexed filters, blocking I/O, repeated subprocess spawning, unbounded loops)
        │
        ▼
  4. Findings Aggregator (root-cause clustering, evidence merging, severity elevation)
@@ -176,14 +183,14 @@ npm pack --dry-run
 ```
 
 Test coverage includes:
-1. Global First installation lifecycle & homedir path handling.
-2. Safe merge of shared configuration files with backups.
-3. Git Scope Resolver (uncommitted, staged, commit SHAs, ranges, merge commits, untracked source files, and empty diff handling).
-4. Findings Aggregator deduplication and multi-evidence merging.
-5. External-evaluator decision helper (`CONFIRMED`, `REJECTED`, `NEEDS_VERIFICATION`).
-6. Regression cases for command injection, symlink/traversal handling, configuration preservation, conservative verification, and distinct findings.
+1. Global First and local installation/uninstallation lifecycle & isolated homedir handling.
+2. Cross-platform POSIX path normalization, host-owned directory protection (`.claude`, `.codex`, `.gemini`), and tool-private directory cleanup.
+3. Cross-process file locking (`ProcessLock`) and atomic manifest persistence.
+4. Git Scope Resolver (uncommitted, staged, commit SHAs, annotated tags, ranges, merge commits, subdirectory execution, untracked source files, and empty diff handling).
+5. SSOT canonical prompt/skill dynamic rendering, platform frontmatter validation, and Finding JSON schema contracts.
+6. Regression cases for Git option/command injection, symlink/traversal blocking, user configuration preservation, and adversarial verification rules.
 
-The deliberate bug fixtures and handwritten finding tests do **not** measure LLM detection accuracy. Native agent discovery, end-to-end delegation, recall, and false-positive rates have not been validated on the three platforms. See [the evaluation protocol](docs/reviewer-evaluation.md).
+Unit and contract tests verify installation safety, Git scope resolution, and prompt/schema contracts; they do **not** measure LLM detection accuracy. Native agent discovery, end-to-end delegation, recall, and false-positive rates have not been validated on the three platforms.
 
 ---
 
