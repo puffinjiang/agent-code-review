@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import { execSync } from "node:child_process";
+import { execSync, execFile } from "node:child_process";
+import { buildSync } from "esbuild";
 import { Installer } from "../src/lib/installer.js";
 import { Uninstaller } from "../src/lib/uninstaller.js";
 import { Doctor } from "../src/lib/doctor.js";
@@ -183,21 +184,44 @@ describe("Global First Installer Lifecycle", () => {
     expect(report.platformVerification.antigravity.verified).toBe(false);
   });
 
-  it("should safely merge manifest records when multiple platforms are installed in succession or concurrently", () => {
-    const claudeInstaller = new Installer({
-      homeDir: tempHome,
-      scope: "global",
-      platform: "claude-code"
-    });
-    const codexInstaller = new Installer({
-      homeDir: tempHome,
-      scope: "global",
-      platform: "codex"
+  it("should safely merge manifest records when multiple platforms are installed concurrently across processes (D-13 / D-14)", async () => {
+    const bundlePath = path.join(tempWorkspace, "installer-worker.mjs");
+    buildSync({
+      entryPoints: [path.resolve("src/index.ts")],
+      outfile: bundlePath,
+      bundle: true,
+      platform: "node",
+      format: "esm"
     });
 
-    // Run both installations
-    const resA = claudeInstaller.execute();
-    const resB = codexInstaller.execute();
+    const assetsRoot = path.resolve("assets");
+    const runChildInstall = (platform: "claude-code" | "codex", holdLockMs: number) =>
+      new Promise<{ success: boolean; platforms: string[] }>((resolve, reject) => {
+        const script = `
+          import { Installer, ProcessLock } from ${JSON.stringify(bundlePath)};
+          const homeDir = ${JSON.stringify(tempHome)};
+          const templateDir = ${JSON.stringify(assetsRoot)};
+          const platform = ${JSON.stringify(platform)};
+          const holdMs = ${holdLockMs};
+          if (holdMs > 0) {
+            const release = ProcessLock.acquire(homeDir);
+            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, holdMs);
+            release();
+          }
+          const res = new Installer({ homeDir, scope: "global", platform, templateDir }).execute();
+          process.stdout.write(JSON.stringify({ success: res.success, platforms: res.platforms }));
+        `;
+        execFile(process.execPath, ["--input-type=module", "-e", script], (err, stdout, stderr) => {
+          if (err) return reject(new Error(stderr || err.message));
+          resolve(JSON.parse(stdout));
+        });
+      });
+
+    // Spawn two real child processes concurrently; one briefly holds the lock to force EEXIST contention
+    const [resA, resB] = await Promise.all([
+      runChildInstall("claude-code", 80),
+      runChildInstall("codex", 0)
+    ]);
 
     expect(resA.success).toBe(true);
     expect(resB.success).toBe(true);
@@ -208,10 +232,11 @@ describe("Global First Installer Lifecycle", () => {
     expect(manifest?.platforms).toContain("claude-code");
     expect(manifest?.platforms).toContain("codex");
 
-    // Both platforms' files must be present
+    // Both platforms' files must be present (6 claude-code + 6 codex = 12 files)
     const platformsInFiles = manifest!.files.map((f) => f.platform);
     expect(platformsInFiles).toContain("claude-code");
     expect(platformsInFiles).toContain("codex");
+    expect(manifest!.files.length).toBe(12);
 
     // Verify files on disk
     expect(fs.existsSync(path.join(tempHome, ".claude/skills/code-review/SKILL.md"))).toBe(true);

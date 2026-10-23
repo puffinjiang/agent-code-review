@@ -113,6 +113,20 @@ describe("Git Scope Resolver", () => {
     expect(result.changedFiles).toContain("feat.txt");
   });
 
+  it("should resolve annotated tags without leaking the tag header into changedFiles (D-14)", () => {
+    fs.writeFileSync(path.join(tempDir, "tagged.txt"), "tagged content\n");
+    git("add", "tagged.txt");
+    git("commit", "-m", "feat: tagged change");
+    git("tag", "-a", "v9.9.9", "-m", "release notes line");
+
+    const result = new GitScopeResolver(tempDir).resolve({ target: "v9.9.9" });
+
+    expect(result.changedFiles).toEqual(["tagged.txt"]);
+    expect(result.patch).not.toContain("release notes line");
+    expect(result.patch).not.toMatch(/^tag v9\.9\.9/m);
+    expect(result.headCommit).toBe(git("rev-parse", "HEAD"));
+  });
+
   it("should correctly resolve repository-wide scope when executed from a subdirectory", () => {
     // Commit initial file
     fs.writeFileSync(path.join(tempDir, "root.txt"), "root line 1\n");

@@ -211,7 +211,25 @@ export class Installer {
       };
     }
 
-    // Physical installation acquires exclusive process lock on baseDir
+    // Physical installation acquires exclusive process lock on baseDir.
+    // 加锁失败、写盘失败、清单保存失败都统一转为结构化失败结果，不向 CLI 抛出（D-14）。
+    try {
+      return this.executeLocked(baseDir);
+    } catch (error) {
+      return {
+        scope: this.scope,
+        baseDir,
+        platforms: this.getTargetPlatforms(),
+        success: false,
+        dryRun: false,
+        items: [],
+        manifestSaved: false,
+        errors: [(error as Error).message]
+      };
+    }
+  }
+
+  private executeLocked(baseDir: string): InstallResult {
     return ProcessLock.withLock(baseDir, () => {
       let items: InstallPlanItem[];
       let conflicts: string[];

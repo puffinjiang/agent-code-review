@@ -832,4 +832,6 @@ expect(total).toBeGreaterThan(0);
 | **D-11** | Windows 测试可能误操作真实用户目录 | Node.js `os.homedir()` 在 Windows 优先读取 `USERPROFILE`/`HOMEPATH`，`tests/cli.test.ts` 仅修改 `process.env.HOME` 无法重定向主目录，导致测试执行真实全局卸载 | 命令处理器接受显式参数注入；单测环境全面重定向 Windows 与 POSIX 环境变量（`USERPROFILE`, `HOMEDRIVE`, `HOMEPATH`, `HOME`） |
 | **D-12** | 仓库子目录执行 `scope` 路径基准混用并漏收未跟踪文件 | `GitScopeResolver` 原本仅在调用者的 `cwd` 执行 `git ls-files`，在子目录下漏审父级与其他目录的未跟踪文件，且生成的 patch 路径基准分裂 | 引入 `getRepoRoot()`（`rev-parse --show-toplevel`），统一所有 Git 操作及 patch 生成基准于仓库根，并补全跨目录单测验证 |
 | **D-13** | 并发安装不同平台会丢失清单记录 (TOCTOU) | 多个安装进程同时执行时，Read-Modify-Write 缺少互斥保护，后写者覆盖前者导致卸载遗留孤儿文件 | 引入跨进程文件排他锁 `ProcessLock`（`src/lib/lock.ts`，支持超时与僵尸 PID 恢复），`ManifestManager.save` 改为临时文件原子 rename 替换，全套测试（92 passed）通过 |
+| **D-14** | `ae980bc` 二次审查发现的锁与清单边界缺陷（CAND-001 ~ CAND-008） | ① `ProcessLock` 遇软链跟随读取/悬空软链忙等 5s、破锁与释放无 token 校验、非正数 PID `kill(0,0)` 误判存活；② `ManifestManager.save` 临时文件缺少随机熵与 `wx`；③ `Installer`/`Uninstaller` 未捕获锁/写盘异常；④ `GitScopeResolver` 单提交模式未先剥离附注标签（`git tag -a`）；⑤ 测试未覆盖默认 `os.homedir()` 与跨进程锁争用 | `ProcessLock` 改为 `lstatSync` 拒绝软链、临时文件 + `linkSync` 原子发布、token 所有权释放、原子 `rename` 破锁、校验 `pid > 0` 并用 `Atomics.wait` 阻塞；`ManifestManager.save` 采用随机后缀 + `openSync('wx')` + `fchmodSync`；`Installer`/`Uninstaller` 外层 `try/catch` 统一返回结构化错误；`scope.ts` 先执行 `rev-parse ${target}^{commit}` 剥离标签；补齐真实多子进程并发安装测试与锁争用测试（97 passed） |
+
 

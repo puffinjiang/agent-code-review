@@ -82,9 +82,24 @@ export class Uninstaller {
       return this.executeInternal(baseDir);
     }
 
-    return ProcessLock.withLock(baseDir, () => {
-      return this.executeInternal(baseDir);
-    });
+    try {
+      return ProcessLock.withLock(baseDir, () => {
+        return this.executeInternal(baseDir);
+      });
+    } catch (error) {
+      // 加锁或文件系统异常统一转为结构化失败结果（D-14）
+      return {
+        scope: this.scope,
+        baseDir,
+        success: false,
+        dryRun: false,
+        removedFiles: [],
+        skippedFiles: [],
+        manualCleanup: [],
+        manifestRemoved: false,
+        errors: [(error as Error).message]
+      };
+    }
   }
 
   private executeInternal(baseDir: string): UninstallResult {

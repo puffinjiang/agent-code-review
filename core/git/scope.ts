@@ -171,28 +171,31 @@ export class GitScopeResolver {
         changedFiles = nameStatus.split("\0").filter(Boolean);
       }
     } else {
-      // Single commit target (e.g. SHA or HEAD~1)
+      // Single commit target (e.g. SHA, HEAD~1, branch, or tag)
       try {
+        // 先剥离为 commit SHA：附注标签（git tag -a）直接交给 git show 时，
+        // --format= 不会抑制标签头，标签信息会混入 patch 与 changedFiles[0]。
+        const commit = this.runGit(["rev-parse", "--verify", `${target}^{commit}`], true).trim();
         // Check if merge commit (has more than 1 parent)
-        const parents = this.runGit(["rev-list", "--parents", "-n", "1", target], true).trim().split(" ");
+        const parents = this.runGit(["rev-list", "--parents", "-n", "1", commit], true).trim().split(" ");
         if (parents.length > 2) {
           isMergeCommit = true;
           baseCommit = parents[1];
           // For merge commits, diff against first parent by default and note merge status
-          patch = this.runGit(["diff", `${target}^1`, target, "--"], true);
-          const nameStatus = this.runGit(["diff", "--name-only", "-z", `${target}^1`, target, "--"], true);
+          patch = this.runGit(["diff", `${commit}^1`, commit, "--"], true);
+          const nameStatus = this.runGit(["diff", "--name-only", "-z", `${commit}^1`, commit, "--"], true);
           if (nameStatus.length > 0) {
             changedFiles = Array.from(new Set(nameStatus.split("\0").filter(Boolean)));
           }
         } else {
           baseCommit = parents[1];
-          patch = this.runGit(["show", "--format=", target, "--"], true);
-          const nameStatus = this.runGit(["show", "--name-only", "-z", "--format=", target, "--"], true);
+          patch = this.runGit(["show", "--format=", commit, "--"], true);
+          const nameStatus = this.runGit(["show", "--name-only", "-z", "--format=", commit, "--"], true);
           if (nameStatus.length > 0) {
             changedFiles = nameStatus.split("\0").filter(Boolean);
           }
         }
-        headCommit = this.runGit(["rev-parse", "--verify", `${target}^{commit}`], true).trim();
+        headCommit = commit;
       } catch (err: unknown) {
         throw new Error(`Failed to resolve commit target '${target}': ${(err as Error).message}`);
       }

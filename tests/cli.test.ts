@@ -48,23 +48,29 @@ describe("CLI Commands Integration", () => {
     fs.rmSync(tempHome, { recursive: true, force: true });
   });
 
-  it("should run global init and doctor successfully by default", () => {
-    const initCode = runInit({ platform: "antigravity", homeDir: tempHome, workspaceRoot: tempDir });
-    expect(initCode).toBe(0);
+  it("should run global init and doctor successfully by default via os.homedir()", () => {
+    expect(os.homedir()).toBe(tempHome);
 
-    const doctorCode = runDoctor({ homeDir: tempHome, workspaceRoot: tempDir });
+    const initCode = runInit({ platform: "antigravity" });
+    expect(initCode).toBe(0);
+    expect(fs.existsSync(path.join(tempHome, ".agent-code-review.json"))).toBe(true);
+
+    const doctorCode = runDoctor();
     expect(doctorCode).toBe(0);
 
-    const uninstallCode = runUninstall({ global: true, homeDir: tempHome, workspaceRoot: tempDir });
+    const uninstallCode = runUninstall({ global: true });
     expect(uninstallCode).toBe(0);
+    expect(fs.existsSync(path.join(tempHome, ".agent-code-review.json"))).toBe(false);
   });
 
   it("should run local init and uninstall when --local is provided", () => {
-    const initCode = runInit({ local: true, platform: "antigravity", homeDir: tempHome, workspaceRoot: tempDir });
+    const initCode = runInit({ local: true, platform: "antigravity" });
     expect(initCode).toBe(0);
+    expect(fs.existsSync(path.join(tempDir, ".agent-code-review.json"))).toBe(true);
 
-    const uninstallCode = runUninstall({ local: true, homeDir: tempHome, workspaceRoot: tempDir });
+    const uninstallCode = runUninstall({ local: true });
     expect(uninstallCode).toBe(0);
+    expect(fs.existsSync(path.join(tempDir, ".agent-code-review.json"))).toBe(false);
   });
 
   it("should run scope command in git repository", () => {

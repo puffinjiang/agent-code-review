@@ -80,20 +80,24 @@ export class ManifestManager {
 
   public static save(baseDir: string, manifest: InstallationManifest): void {
     const manifestPath = this.getManifestPath(baseDir);
-    const tmpPath = `${manifestPath}.tmp.${process.pid}.${Date.now()}`;
+    // 随机后缀保证同一进程/同一毫秒内的多次保存互不碰撞（D-14）
+    const tmpPath = `${manifestPath}.tmp.${process.pid}.${crypto.randomBytes(8).toString("hex")}`;
     const content = JSON.stringify(manifest, null, 2) + "\n";
 
-    // Write to unique temporary file with restricted permissions first
-    fs.writeFileSync(tmpPath, content, { encoding: "utf-8", mode: 0o600 });
-    fs.chmodSync(tmpPath, 0o600);
-
-    // Atomically replace the target manifest
+    // 'wx' = O_CREAT | O_EXCL：路径已存在（包括预置的符号链接）时直接失败，绝不跟随
+    const fd = fs.openSync(tmpPath, "wx", 0o600);
     try {
+      try {
+        fs.writeFileSync(fd, content, "utf-8");
+        // 通过 fd 设置权限，避免按路径 chmod 时被替换为符号链接
+        fs.fchmodSync(fd, 0o600);
+      } finally {
+        fs.closeSync(fd);
+      }
+      // Atomically replace the target manifest
       fs.renameSync(tmpPath, manifestPath);
     } catch (err) {
-      if (fs.existsSync(tmpPath)) {
-        try { fs.unlinkSync(tmpPath); } catch {}
-      }
+      try { fs.unlinkSync(tmpPath); } catch { /* already renamed or gone */ }
       throw err;
     }
   }
