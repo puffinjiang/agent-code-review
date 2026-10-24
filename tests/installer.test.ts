@@ -113,6 +113,50 @@ describe("Global First Installer Lifecycle", () => {
     }
   });
 
+  it("should not skip via fast-path if manifest.files is missing planned files, and should heal manifest (BUG-2)", () => {
+    // 1. Initial install for antigravity
+    new Installer({ homeDir: tempHome, platform: "antigravity" }).execute();
+
+    // 2. Install claude-code once to lay down the files on disk
+    new Installer({ homeDir: tempHome, platform: "claude-code" }).execute();
+
+    // 3. Simulate an incomplete/corrupted manifest where platforms contains claude-code
+    // but files only contains antigravity files (e.g. legacy or partial state)
+    const originalManifest = ManifestManager.load(tempHome)!;
+    const antigravityOnlyFiles = originalManifest.files.filter((f) => f.platform === "antigravity");
+    ManifestManager.save(tempHome, {
+      ...originalManifest,
+      platforms: ["antigravity", "claude-code"],
+      files: antigravityOnlyFiles
+    });
+
+    const tamperedManifest = ManifestManager.load(tempHome)!;
+    expect(tamperedManifest.files.length).toBe(6);
+    expect(tamperedManifest.platforms).toEqual(["antigravity", "claude-code"]);
+
+    // 4. Run installer for claude-code. Even though files on disk are identical,
+    // it MUST NOT treat as alreadyUpToDate because manifest.files does not cover all items!
+    const reInstaller = new Installer({ homeDir: tempHome, platform: "claude-code" });
+    const result = reInstaller.execute();
+
+    expect(result.success).toBe(true);
+    expect(result.alreadyUpToDate).toBeFalsy();
+
+    // 5. Verify manifest is healed: all 12 files registered
+    const healedManifest = ManifestManager.load(tempHome)!;
+    expect(healedManifest.files.length).toBe(12);
+
+    // 6. Verify uninstaller now cleans up all files without leaving orphans
+    const uninstaller = new Uninstaller({ homeDir: tempHome });
+    const unResult = uninstaller.execute();
+    expect(unResult.success).toBe(true);
+    expect(unResult.removedFiles.length).toBe(12);
+    expect(fs.existsSync(path.join(tempHome, ".claude/skills/code-review/SKILL.md"))).toBe(false);
+    expect(fs.existsSync(path.join(tempHome, ".claude/agents/correctness-reviewer.md"))).toBe(false);
+    expect(fs.existsSync(path.join(tempHome, ".gemini/config/skills/code-review/SKILL.md"))).toBe(false);
+    expect(fs.existsSync(path.join(tempHome, ".agent-code-review.json"))).toBe(false);
+  });
+
   it("should never modify an existing .codex/config.toml", () => {
     // 用户的 Codex 配置可能包含模型、provider、MCP 等内容，任何写入都不可接受
     const codexDir = path.join(tempHome, ".codex");

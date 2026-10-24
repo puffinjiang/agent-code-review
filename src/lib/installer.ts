@@ -7,6 +7,7 @@ import { ProcessLock } from "./lock.js";
 
 
 import { resolveManagedPath, LEGACY_SHARED_CONFIG } from "./managed-path.js";
+import { getPackageVersion } from "./version.js";
 
 export type InstallScope = "global" | "local";
 
@@ -214,25 +215,36 @@ export class Installer {
 
     // A. 无锁快路径（只读检查，几十毫秒）：
     // 若未指定 --force，先快速比对目标平台与当前文件哈希。
-    // 若已覆盖目标平台、版本一致且所有文件均为 skip-identical 且无冲突：
+    // 若已覆盖目标平台、版本一致、无冲突、且清单中已完整登记全部待安装文件：
     // 说明系统已处于最新安装状态，直接成功返回，完全不加锁、不写盘。
     if (!this.force) {
       try {
         const manifest = ManifestManager.load(baseDir);
+        const currentVersion = getPackageVersion();
         const targetPlatforms = this.getTargetPlatforms();
         const hasLegacyEntry = manifest && manifest.files.some((f) => f.path === LEGACY_SHARED_CONFIG);
-        const allCovered = manifest && !hasLegacyEntry && targetPlatforms.every((p) => manifest.platforms.includes(p));
+        const isVersionCurrent = manifest?.packageVersion === currentVersion;
+        const allCovered = manifest && !hasLegacyEntry && isVersionCurrent && targetPlatforms.every((p) => manifest.platforms.includes(p));
+
         if (allCovered) {
           const quickPlan = this.plan();
-          if (
-            quickPlan.conflicts.length === 0 &&
+          // BUG-2 修复：manifest.files 必须完整登记 quickPlan 中的每一个文件且 hash 一致，防止孤儿文件漏入
+          const manifestMap = new Map(manifest.files.map((f) => [f.path, f.hash]));
+          const allFilesRegistered =
             quickPlan.items.length > 0 &&
+            quickPlan.items.every((item) => manifestMap.get(item.relativePath) === item.hash);
+
+          if (
+            allFilesRegistered &&
+            quickPlan.conflicts.length === 0 &&
             quickPlan.items.every((i) => i.action === "skip-identical")
           ) {
+            // S-2 修复：已安装平台应取 manifest 的全集并集，而不是仅回显本次的目标参数
+            const combinedPlatforms = Array.from(new Set([...manifest.platforms, ...targetPlatforms]));
             return {
               scope: this.scope,
               baseDir,
-              platforms: targetPlatforms,
+              platforms: combinedPlatforms,
               success: true,
               dryRun: false,
               items: quickPlan.items,
@@ -294,15 +306,34 @@ export class Installer {
         };
       }
 
-      // C. 临界区内双重检查：若等待锁期间排在前面的进程已完成全部写入且无遗留条目，无需重复写盘
+      // C. 临界区内双重检查：若等待锁期间排在前面的进程已完成全部写入且 manifest 登记完整，无需重复写盘
       const existingManifest = ManifestManager.load(baseDir);
+      const currentVersion = getPackageVersion();
       const hasLegacyEntry = existingManifest && existingManifest.files.some((f) => f.path === LEGACY_SHARED_CONFIG);
+      const isVersionCurrent = existingManifest?.packageVersion === currentVersion;
+      const allPlatformsCovered = existingManifest && targetPlatforms.every((p) => existingManifest.platforms.includes(p));
       const hasModifications = items.some((i) => i.action === "create" || i.action === "update");
-      if (!hasModifications && !hasLegacyEntry && !this.force && items.length > 0) {
+
+      // BUG-2 修复：必须核对现有 manifest.files 是否真正登记了本次 plan 的全部文件且哈希一致
+      const existingManifestMap = new Map(existingManifest?.files.map((f) => [f.path, f.hash]) || []);
+      const allFilesRegistered =
+        items.length > 0 &&
+        items.every((item) => existingManifestMap.get(item.relativePath) === item.hash);
+
+      if (
+        !hasModifications &&
+        !hasLegacyEntry &&
+        !this.force &&
+        allFilesRegistered &&
+        allPlatformsCovered &&
+        isVersionCurrent
+      ) {
+        // S-2 修复：已安装平台应取 manifest 的全集并集
+        const combinedPlatforms = Array.from(new Set([...existingManifest.platforms, ...targetPlatforms]));
         return {
           scope: this.scope,
           baseDir,
-          platforms: targetPlatforms,
+          platforms: combinedPlatforms,
           success: true,
           dryRun: false,
           items,
@@ -363,7 +394,7 @@ export class Installer {
 
         const manifest: InstallationManifest = {
           schemaVersion: "1.0.0",
-          packageVersion: "0.1.0",
+          packageVersion: getPackageVersion(),
           scope: this.scope,
           platforms: combinedPlatforms,
           installedAt: existingManifest?.installedAt || now,

@@ -16,7 +16,7 @@ interface LockData {
   pid: number;
   token: string;
   time: number;
-  startEpoch: number;
+  startEpoch?: number;
 }
 
 /**
@@ -72,7 +72,7 @@ export class ProcessLock {
           pid: data.pid,
           token: data.token,
           time: data.time,
-          startEpoch: typeof data.startEpoch === "number" ? data.startEpoch : data.time
+          startEpoch: typeof data.startEpoch === "number" ? data.startEpoch : undefined
         };
       }
       return null;
@@ -220,6 +220,7 @@ export class ProcessLock {
     const startTime = Date.now();
     const startEpoch = Math.floor(Date.now() - process.uptime() * 1000);
     let notified = false;
+    let cachedVerifiedToken: string | null = null;
 
     if (!fs.existsSync(baseDir)) fs.mkdirSync(baseDir, { recursive: true });
 
@@ -235,22 +236,44 @@ export class ProcessLock {
       if (stat) {
         const data = this.readLock(lockPath);
         if (data) {
-          const actualStartTime = this.getProcessStartTime(data.pid);
-          if (actualStartTime === null) {
-            // PID 已死（进程异常退出/崩溃残留）→ 确认为孤儿死锁，立即打破回收
-            this.breakStale(lockPath, data.token);
-            continue;
+          // S-3 优化：对已确认过的 token 进行缓存，轮询期间直接走轻量 kill(0) 存活性检查，避免每 50ms 重新 spawn ps
+          if (cachedVerifiedToken === data.token) {
+            if (!this.isPidAlive(data.pid)) {
+              this.breakStale(lockPath, data.token);
+              cachedVerifiedToken = null;
+              continue;
+            }
+          } else {
+            // 首次遇到该 token，执行进程身份与存活核验
+            if (!this.isPidAlive(data.pid)) {
+              // PID 已死（进程异常退出/崩溃残留）→ 确认为孤儿死锁，立即打破回收
+              this.breakStale(lockPath, data.token);
+              cachedVerifiedToken = null;
+              continue;
+            }
+
+            // BUG-1 修复：只有当锁内包含合法的数字 startEpoch 时，才进行启动时刻比对；
+            // 缺 startEpoch 的旧格式锁，只要 PID 存活就保守尊重，绝不因缺少字段或误算时间而强抢活锁。
+            if (typeof data.startEpoch === "number") {
+              const actualStartTime = this.getProcessStartTime(data.pid);
+              if (actualStartTime === null) {
+                this.breakStale(lockPath, data.token);
+                cachedVerifiedToken = null;
+                continue;
+              }
+              const timeDiff = Math.abs(actualStartTime - data.startEpoch);
+              if (timeDiff > 2500) {
+                // PID 存活但启动时刻不符（PID 被系统复用，如复用给 PID 1 或守护进程）→ 立即安全回收
+                this.breakStale(lockPath, data.token);
+                cachedVerifiedToken = null;
+                continue;
+              }
+            }
+
+            cachedVerifiedToken = data.token;
           }
 
-          // PID 存活，进一步核验该 PID 的实际启动时刻与锁内 startEpoch 是否匹配（容差 ±2500ms）
-          const timeDiff = Math.abs(actualStartTime - data.startEpoch);
-          if (timeDiff > 2500) {
-            // PID 存活但启动时刻不符（PID 被操作系统回收复用给无关进程，如 PID 1 或守护进程）→ 立即安全回收
-            this.breakStale(lockPath, data.token);
-            continue;
-          }
-
-          // PID 存活且启动时刻匹配 → 100% 确定为真实的并发 agent-code-review 活锁！
+          // PID 存活且身份无误 → 100% 确定为真实的并发 agent-code-review 活锁！
           // 绝不按 age 超时抢占活锁，避免破坏并发互斥。
           const elapsed = Date.now() - startTime;
           if (elapsed >= 300 && !notified) {

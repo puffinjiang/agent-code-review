@@ -1,6 +1,7 @@
 import { Installer, InstallScope } from "../lib/installer.js";
 import { SupportedPlatform } from "../../adapters/index.js";
 import { detectPlatforms } from "../lib/detect-platform.js";
+import { getPackageVersion } from "../lib/version.js";
 
 export interface InitCommandOptions {
   platform?: string;
@@ -70,7 +71,8 @@ export function runInit(options: InitCommandOptions = {}): number {
 
   // 若系统已是完全最新安装状态，给出清晰简洁的已就绪提示，避免刷屏冗余动作
   if (result.alreadyUpToDate) {
-    console.log(`\nℹ️  Agent Code Review (v0.1.0) 已经安装且已是最新状态 [${result.platforms.join(", ")}]。`);
+    const ver = getPackageVersion();
+    console.log(`\nℹ️  Agent Code Review (v${ver}) 已经安装且已是最新状态 [${result.platforms.join(", ")}]。`);
     console.log(`   所有 ${result.items.length} 个配置文件与当前版本完全一致，无需重复安装。`);
     console.log(`\n💡 Usage: 在 agent 会话中输入以下任一方式开始审查:`);
     const usages: string[] = [];

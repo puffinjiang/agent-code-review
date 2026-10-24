@@ -123,6 +123,42 @@ describe("ProcessLock Unit Tests", () => {
     expect(fs.existsSync(lockPath)).toBe(false);
   });
 
+  it("should conservatively respect legacy lock without startEpoch when PID is alive and not break it (BUG-1)", () => {
+    const lockPath = ProcessLock.getLockPath(tempDir);
+    // Legacy lock format with alive PID (e.g. current process) but missing startEpoch
+    fs.writeFileSync(
+      lockPath,
+      JSON.stringify({ pid: process.pid, token: "legacy-live-token", time: Date.now() - 10000 }),
+      "utf-8"
+    );
+
+    // Contender must respect the lock and NOT break/steal it
+    expect(() =>
+      ProcessLock.acquire(tempDir, { timeoutMs: 150, retryIntervalMs: 25 })
+    ).toThrow(/获取安装锁超时/);
+
+    expect(fs.existsSync(lockPath)).toBe(true);
+    const lockData = JSON.parse(fs.readFileSync(lockPath, "utf-8"));
+    expect(lockData.token).toBe("legacy-live-token");
+  });
+
+  it("should break legacy lock without startEpoch when PID is dead (BUG-1)", () => {
+    const lockPath = ProcessLock.getLockPath(tempDir);
+    // Legacy lock format with dead PID
+    fs.writeFileSync(
+      lockPath,
+      JSON.stringify({ pid: 999999999, token: "legacy-dead-token", time: Date.now() - 10000 }),
+      "utf-8"
+    );
+
+    const release = ProcessLock.acquire(tempDir, { timeoutMs: 500 });
+    expect(fs.existsSync(lockPath)).toBe(true);
+    const lockData = JSON.parse(fs.readFileSync(lockPath, "utf-8"));
+    expect(lockData.token).not.toBe("legacy-dead-token");
+    release();
+    expect(fs.existsSync(lockPath)).toBe(false);
+  });
+
   it("should print holding notification to stderr if waiting exceeds 300ms", async () => {
     const releaseA = ProcessLock.acquire(tempDir);
     const stderrSpy: string[] = [];
