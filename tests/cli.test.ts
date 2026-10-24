@@ -78,4 +78,24 @@ describe("CLI Commands Integration", () => {
     const scopeCode = runScope("uncommitted", { json: true });
     expect(scopeCode).toBe(0);
   });
+
+  it("should show already up to date notice when run a second time for same platform", () => {
+    const logs: string[] = [];
+    const origLog = console.log;
+    console.log = (...args: unknown[]) => {
+      logs.push(args.map(String).join(" "));
+    };
+
+    try {
+      const code1 = runInit({ platform: "antigravity" });
+      expect(code1).toBe(0);
+
+      const code2 = runInit({ platform: "antigravity" });
+      expect(code2).toBe(0);
+      expect(logs.some((l) => l.includes("已经安装且已是最新状态"))).toBe(true);
+      expect(logs.some((l) => l.includes("无需重复安装"))).toBe(true);
+    } finally {
+      console.log = origLog;
+    }
+  });
 });

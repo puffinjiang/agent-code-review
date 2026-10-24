@@ -6,38 +6,42 @@ export const LOCK_FILENAME = ".agent-code-review.lock";
 
 export interface LockOptions {
   timeoutMs?: number;
-  staleMs?: number;
   retryIntervalMs?: number;
+  staleMs?: number;
 }
 
 interface LockData {
   pid: number;
-  /** 旧格式或手工写入的锁文件可能缺少 token */
-  token?: string;
-  time?: number;
+  token: string;
+  time: number;
 }
 
 /**
- * 跨进程排他锁（同步实现，以保持 Installer/Uninstaller 的同步 execute() 契约）。
+ * 跨进程排他锁（轻量同步实现，保持 Installer/Uninstaller 的同步 execute() 契约）。
  *
- * 设计约束（见 docs/audit-and-remediation.md D-14）：
- * 1. 原子初始化：先把完整内容写入随机命名的临时文件，再 linkSync 发布到锁路径。
- *    link 在目标已存在（含符号链接）时以 EEXIST 失败，锁文件永远不会以 0 字节形态被他人观察到。
- * 2. 所有权释放：每次加锁生成唯一 token，release() 仅在锁文件 token 仍属于自己时才删除。
- * 3. 原子破锁：过期锁先 rename 到唯一回收路径（同一文件只有一个进程能 rename 成功），
- *    再核对 token；若误移了他人刚创建的新锁，则尝试 link 回原处。
- * 4. 拒绝符号链接：锁路径为符号链接时立即失败，不跟随、不忙等。
+ * 核心设计原则（回归常识与极简工程）：
+ * 1. 临界区非常短：Installer 仅向本地磁盘写入 6 个 Markdown 模板与 1 个清单文件，正常耗时仅 20~50 毫秒。
+ * 2. 原子互斥：使用 openSync(lockPath, "wx")，由操作系统内核保证 O_EXCL 原子排他。
+ * 3. 拥有权校验：锁内包含唯一 UUID token，释放时仅在 token 匹配时才 unlink，防止误删他人新锁。
+ * 4. 崩溃自愈：
+ *    - 持锁进程已死亡（!isPidAlive）→ 立即自愈回收；
+ *    - 锁年龄超过 MAX_LOCK_AGE_MS（默认 15 秒）→ 没有任何合法实例能运行 15 秒，即使 PID 碰巧被复用也确系崩溃残留，直接自愈回收；
+ *    - 0 字节异常空文件持续超 500ms → 创建时崩溃残留，直接自愈回收；
+ *    - 含有用户数据的非 ACR 外来文件 → 拒绝覆盖并报错，保护用户数据。
+ * 5. 符号链接安全：遇到符号链接立即报错退出，绝不跟随。
  */
 export class ProcessLock {
+  public static readonly DEFAULT_TIMEOUT_MS = 5000;
+  public static readonly DEFAULT_RETRY_INTERVAL_MS = 50;
+  public static readonly DEFAULT_STALE_MS = 15000;
+
   public static getLockPath(baseDir: string): string {
     return path.join(baseDir, LOCK_FILENAME);
   }
 
   public static isPidAlive(pid: number): boolean {
-    // kill(0) 指向当前进程组、kill(负数) 指向进程组/全部进程，均会"成功"，必须排除
     if (!Number.isInteger(pid) || pid <= 0) return false;
     try {
-      // Signal 0 tests for process existence without sending a signal
       process.kill(pid, 0);
       return true;
     } catch (e: unknown) {
@@ -46,155 +50,270 @@ export class ProcessLock {
     }
   }
 
-  private static uniqueSibling(lockPath: string, kind: string): string {
-    return `${lockPath}.${kind}.${process.pid}.${crypto.randomBytes(8).toString("hex")}`;
-  }
-
   private static readLock(filePath: string): LockData | null {
     try {
-      const data = JSON.parse(fs.readFileSync(filePath, "utf-8"));
-      if (data && typeof data.pid === "number") return data as LockData;
-      return null;
-    } catch {
-      return null;
-    }
-  }
-
-  /** 拒绝符号链接；返回 lstat 结果，路径不存在时返回 null。 */
-  private static lstatNoSymlink(lockPath: string): fs.Stats | null {
-    try {
-      const stat = fs.lstatSync(lockPath);
-      if (stat.isSymbolicLink()) {
-        throw new Error(`Refusing symbolic link at lock path: ${lockPath}`);
-      }
-      return stat;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-      throw error;
-    }
-  }
-
-  /** 以「临时文件 + link」原子创建锁文件。成功返回 true，锁已存在返回 false。 */
-  private static tryCreate(lockPath: string, data: LockData): boolean {
-    const tmpPath = this.uniqueSibling(lockPath, "tmp");
-    const fd = fs.openSync(tmpPath, "wx", 0o600);
-    try {
+      let content: string;
       try {
-        fs.writeFileSync(fd, JSON.stringify(data), "utf-8");
-      } finally {
-        fs.closeSync(fd);
-      }
-      try {
-        fs.linkSync(tmpPath, lockPath);
-        return true;
-      } catch (error) {
-        const code = (error as NodeJS.ErrnoException).code;
-        if (code === "EEXIST") return false;
-        // 不支持硬链接的文件系统：退化为 O_EXCL 直接创建（仍保证互斥，只是存在极短的空文件窗口）
-        if (code === "EPERM" || code === "ENOTSUP" || code === "EOPNOTSUPP" || code === "ENOSYS") {
-          return this.tryCreateExclusive(lockPath, data);
+        content = fs.readFileSync(filePath, "utf-8");
+      } catch (readErr: unknown) {
+        const code = (readErr as NodeJS.ErrnoException).code;
+        if (code === "EACCES" || code === "EPERM") {
+          throw Object.assign(
+            new Error(
+              `无法读取安装锁文件（权限不足/${code}）: ${filePath}\n` +
+              `   若确认该文件无用，可使用更高权限删除后重试: rm "${filePath}"`
+            ),
+            { code }
+          );
         }
-        throw error;
+        return null;
       }
-    } finally {
-      try { fs.unlinkSync(tmpPath); } catch { /* already gone */ }
-    }
-  }
 
-  private static tryCreateExclusive(lockPath: string, data: LockData): boolean {
-    let fd: number;
-    try {
-      fd = fs.openSync(lockPath, "wx", 0o600);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
-      throw error;
+      const data = JSON.parse(content);
+      if (
+        data &&
+        typeof data === "object" &&
+        Number.isInteger(data.pid) &&
+        data.pid > 0 &&
+        typeof data.token === "string" &&
+        data.token.length > 0 &&
+        typeof data.time === "number"
+      ) {
+        return {
+          pid: data.pid,
+          token: data.token,
+          time: data.time
+        };
+      }
+      return null;
+    } catch (err: unknown) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "EACCES" || code === "EPERM") throw err;
+      return null;
     }
-    try {
-      fs.writeFileSync(fd, JSON.stringify(data), "utf-8");
-    } catch (error) {
-      fs.closeSync(fd);
-      try { fs.unlinkSync(lockPath); } catch { /* ignore */ }
-      throw error;
-    }
-    fs.closeSync(fd);
-    return true;
-  }
-
-  /**
-   * 原子地打破一个被判定为过期的锁。
-   * expectedToken 为判定时读到的 token（损坏的锁文件为 null）。
-   */
-  private static breakStale(lockPath: string, expectedToken: string | null): void {
-    const trashPath = this.uniqueSibling(lockPath, "stale");
-    try {
-      fs.renameSync(lockPath, trashPath);
-    } catch (error) {
-      // ENOENT：已被其他破锁者移走，直接重试获取即可
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
-      throw error;
-    }
-    const moved = this.readLock(trashPath);
-    const movedToken = moved?.token ?? null;
-    if (movedToken !== expectedToken) {
-      // 判定与 rename 之间锁已被他人替换：我们误移了一个新的活锁，尽力恢复
-      try { fs.linkSync(trashPath, lockPath); } catch { /* 已有更新的锁，放弃恢复 */ }
-    }
-    try { fs.unlinkSync(trashPath); } catch { /* ignore */ }
   }
 
   private static sleepSync(ms: number): void {
-    // 同步等待，保持 Installer.execute() 的同步契约且不占用 CPU
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
   }
 
+  /**
+   * P3-1 优化：以「随机临时文件 + linkSync」原子发布锁文件。
+   * 锁文件在产生并对他人可见的那一瞬间，内容就已经完整就绪，绝不会以 0 字节悬空形态被他人观察到。
+   * 若文件系统不支持硬链接（如 FAT32/exFAT），降级为 openSync("wx") 直接创建。
+   */
+  private static tryCreate(lockPath: string, data: LockData): boolean {
+    const tmpPath = `${lockPath}.tmp.${process.pid}.${crypto.randomBytes(6).toString("hex")}`;
+    let fd: number | null = null;
+    try {
+      fd = fs.openSync(tmpPath, "wx", 0o600);
+      fs.writeFileSync(fd, JSON.stringify(data), "utf-8");
+      fs.closeSync(fd);
+      fd = null;
+
+      try {
+        fs.linkSync(tmpPath, lockPath);
+        return true;
+      } catch (linkErr: unknown) {
+        const code = (linkErr as NodeJS.ErrnoException).code;
+        if (code === "EEXIST") return false;
+        // 不支持硬链接的文件系统（如 FAT32/exFAT）：降级以 O_EXCL 创建
+        if (code === "EPERM" || code === "ENOTSUP" || code === "EOPNOTSUPP" || code === "ENOSYS") {
+          let directFd: number | null = null;
+          try {
+            directFd = fs.openSync(lockPath, "wx", 0o600);
+            fs.writeFileSync(directFd, JSON.stringify(data), "utf-8");
+            return true;
+          } catch (directErr: unknown) {
+            if ((directErr as NodeJS.ErrnoException).code === "EEXIST") return false;
+            throw directErr;
+          } finally {
+            if (directFd !== null) {
+              try { fs.closeSync(directFd); } catch {}
+            }
+          }
+        }
+        throw linkErr;
+      }
+    } finally {
+      if (fd !== null) {
+        try { fs.closeSync(fd); } catch {}
+      }
+      try { fs.unlinkSync(tmpPath); } catch {}
+    }
+  }
+
+  /**
+   * O-2 优化：CAS 安全回收。
+   * 通过 renameSync 原子移出锁文件，只有获胜进程能取得该文件。
+   * 移出后核对 token：
+   * - 若匹配 expectedToken（或 0 字节时同为 null），确认确属死锁/残留，安全销毁。
+   * - 若不匹配（窗口期内有新进程建锁），用 linkSync 原子恢复，绝不误删他人新锁。
+   */
+  private static reclaim(lockPath: string, expectedToken: string | null): void {
+    const trash = `${lockPath}.reclaim.${process.pid}.${crypto.randomBytes(6).toString("hex")}`;
+    try {
+      fs.renameSync(lockPath, trash);
+    } catch {
+      return; // ENOENT: 已经被其他并发进程取走或原持有者已正常释放
+    }
+
+    let isZero = false;
+    try {
+      isZero = fs.lstatSync(trash).size === 0;
+    } catch {}
+
+    const moved = this.readLock(trash);
+    const same = expectedToken === null ? isZero : moved?.token === expectedToken;
+
+    if (!same) {
+      // 误移了别人的新锁或外来文件 → 用 linkSync（EEXIST 安全）原子还原，绝不覆盖新创建的锁
+      try {
+        fs.linkSync(trash, lockPath);
+      } catch (linkErr: unknown) {
+        const code = (linkErr as NodeJS.ErrnoException).code;
+        // 不支持硬链接的文件系统（如 FAT32/exFAT）：若原处尚无文件，降级使用 rename 还原
+        if (code === "EPERM" || code === "ENOTSUP" || code === "EOPNOTSUPP" || code === "ENOSYS") {
+          try {
+            if (!fs.existsSync(lockPath)) {
+              fs.renameSync(trash, lockPath);
+            }
+          } catch {}
+        }
+      }
+      try {
+        fs.unlinkSync(trash);
+      } catch {}
+      return;
+    }
+
+    try {
+      fs.unlinkSync(trash);
+    } catch {}
+  }
+
   public static acquire(baseDir: string, options: LockOptions = {}): () => void {
-    const timeoutMs = options.timeoutMs ?? 5000;
-    const staleMs = options.staleMs ?? 15000;
-    const retryIntervalMs = options.retryIntervalMs ?? 50;
+    const timeoutMs = options.timeoutMs ?? this.DEFAULT_TIMEOUT_MS;
+    const retryIntervalMs = options.retryIntervalMs ?? this.DEFAULT_RETRY_INTERVAL_MS;
+    const maxAgeMs = options.staleMs ?? this.DEFAULT_STALE_MS;
 
     const lockPath = this.getLockPath(baseDir);
     const token = crypto.randomUUID();
     const startTime = Date.now();
+    let notified = false;
 
     if (!fs.existsSync(baseDir)) fs.mkdirSync(baseDir, { recursive: true });
 
     while (Date.now() - startTime < timeoutMs) {
-      this.lstatNoSymlink(lockPath);
-
-      if (this.tryCreate(lockPath, { pid: process.pid, token, time: Date.now() })) {
-        return () => this.release(lockPath, token);
+      // 1. 检查是否存在符号链接攻击
+      try {
+        const stat = fs.lstatSync(lockPath);
+        if (stat.isSymbolicLink()) {
+          throw new Error(`Refusing symbolic link at lock path: ${lockPath}`);
+        }
+      } catch (err: unknown) {
+        if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
       }
 
-      // 锁已存在：判断是否过期
-      const stat = this.lstatNoSymlink(lockPath);
-      if (stat) {
+      // 2. 尝试原子发布锁文件（P3-1: 临时文件 + linkSync，彻底消除 0 字节观察窗口）
+      try {
+        if (this.tryCreate(lockPath, { pid: process.pid, token, time: Date.now() })) {
+          return () => this.release(lockPath, token);
+        }
+      } catch (err: unknown) {
+        throw new Error(`获取安装锁失败: ${(err as Error).message}`);
+      }
+
+      // 3. 锁已存在：分析锁状态并尝试自愈
+      try {
+        const stat = fs.lstatSync(lockPath);
+        if (stat.isSymbolicLink()) {
+          throw new Error(`Refusing symbolic link at lock path: ${lockPath}`);
+        }
+
         const age = Date.now() - stat.mtimeMs;
         const data = this.readLock(lockPath);
-        let stale = age > staleMs;
-        if (!stale && data && !this.isPidAlive(data.pid)) stale = true;
-        // 损坏/无法解析的锁文件：本实现从不产生半写入锁，超过 1s 即可视为残留
-        if (!stale && !data && age > 1000) stale = true;
-        if (stale) {
-          this.breakStale(lockPath, data?.token ?? null);
+
+        if (!data) {
+          // 无法解析：区分 0 字节崩溃残留 vs 外来文件
+          if (stat.size === 0 && age > 500) {
+            this.reclaim(lockPath, null);
+            continue;
+          }
+          if (stat.size > 0 && age > 500) {
+            throw new Error(
+              `Lock path '${lockPath}' contains an invalid or foreign file. Refusing to overwrite.\n` +
+              `   若确认为本工具遗留的残留，可删除后重试: rm "${lockPath}"`
+            );
+          }
+        } else {
+          // 合法锁数据
+          // A. 进程已死亡（异常崩溃/强制退出）→ 立即自愈回收
+          if (!this.isPidAlive(data.pid)) {
+            this.reclaim(lockPath, data.token);
+            continue;
+          }
+
+          // B. 锁年龄超过 maxAgeMs（默认 15 秒）→ 本工具正常运行仅需几十毫秒，15秒后必定是崩溃残留
+          // （即使该 PID 被操作系统复用给无关进程，也是死锁，必须安全自愈打破）
+          if (age > maxAgeMs) {
+            this.reclaim(lockPath, data.token);
+            continue;
+          }
+
+          // C. 真实并发冲突：若等待超过 300ms，在 stderr 打印友好提示
+          const elapsed = Date.now() - startTime;
+          if (elapsed >= 300 && !notified) {
+            notified = true;
+            const heldSec = Math.max(1, Math.round((Date.now() - data.time) / 1000));
+            process.stderr.write(
+              `⏳ 检测到另一个 agent-code-review 正在运行 (PID: ${data.pid}, 已持锁 ${heldSec} 秒)\n` +
+              `   锁路径: ${lockPath}\n`
+            );
+          }
+        }
+      } catch (err: unknown) {
+        // P3-4: 仅在竞争中途原锁刚好被原持有者正常释放时（ENOENT），忽略并立即进入下一轮获取
+        // 其他错误（符号链接拒绝、外来文件冲突、权限错误等）一律显式向上抛出，不再依赖脆弱的字符串匹配
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") {
           continue;
         }
+        throw err;
       }
 
       this.sleepSync(retryIntervalMs);
     }
 
-    throw new Error(`Failed to acquire lock on '${lockPath}' within ${timeoutMs}ms.`);
+    let lastData: LockData | null = null;
+    try {
+      lastData = this.readLock(lockPath);
+    } catch {
+      // C-2: 忽略超时诊断阶段的读取异常，降级显示通用被占用提示
+    }
+    const pidInfo = lastData ? `由正在运行的进程 (PID: ${lastData.pid}) 持有` : `被占用`;
+    const inspectCmd = process.platform === "win32"
+      ? (lastData ? `Get-Process -Id ${lastData.pid}` : `dir "${lockPath}"`)
+      : (lastData ? `ps -p ${lastData.pid}` : `ls -l "${lockPath}"`);
+
+    throw new Error(
+      `获取安装锁超时 (${timeoutMs}ms)：该锁${pidInfo}。\n` +
+      `   锁路径: ${lockPath}\n` +
+      `   可运行 '${inspectCmd}' 查看该进程状态。\n` +
+      `   若确认该进程已异常退出，下次运行本工具时会自动安全回收锁。`
+    );
   }
 
-  /** 仅在锁仍属于本次获取（token 一致）时删除，避免误删他人在破锁后获取的新锁。 */
-  private static release(lockPath: string, token: string): void {
+  public static release(lockPath: string, token: string): void {
     try {
       const stat = fs.lstatSync(lockPath);
       if (stat.isSymbolicLink()) return;
-      const data = this.readLock(lockPath);
-      if (data && data.token === token) fs.unlinkSync(lockPath);
+
+      const current = this.readLock(lockPath);
+      if (current && current.token === token) {
+        fs.unlinkSync(lockPath);
+      }
     } catch {
-      // Lock already gone or unreadable: nothing to release
+      // 锁已被移除或不可访问
     }
   }
 

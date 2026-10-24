@@ -94,21 +94,133 @@ describe("Global First Installer Lifecycle", () => {
     expect(fs.existsSync(path.join(tempHome, ".codex/config.toml"))).toBe(false);
   });
 
-  it("should be idempotent when re-run globally", () => {
+  it("should be idempotent when re-run globally and bypass lock on fast path", () => {
     const installer = new Installer({
       homeDir: tempHome,
       workspaceRoot: tempWorkspace,
       platform: "claude-code"
     });
 
-    installer.execute();
+    const result1 = installer.execute();
+    expect(result1.success).toBe(true);
 
-    // Re-run
+    // Re-run without --force: triggers Fast Path (A) without acquiring lock
     const result2 = installer.execute();
     expect(result2.success).toBe(true);
+    expect(result2.alreadyUpToDate).toBe(true);
     for (const item of result2.items) {
       expect(item.action).toBe("skip-identical");
     }
+  });
+
+  it("should not skip via fast-path if manifest.files is missing planned files, and should heal manifest (BUG-2)", () => {
+    // 1. Initial install for antigravity
+    new Installer({ homeDir: tempHome, platform: "antigravity" }).execute();
+
+    // 2. Install claude-code once to lay down the files on disk
+    new Installer({ homeDir: tempHome, platform: "claude-code" }).execute();
+
+    // 3. Simulate an incomplete/corrupted manifest where platforms contains claude-code
+    // but files only contains antigravity files (e.g. legacy or partial state)
+    const originalManifest = ManifestManager.load(tempHome)!;
+    const antigravityOnlyFiles = originalManifest.files.filter((f) => f.platform === "antigravity");
+    ManifestManager.save(tempHome, {
+      ...originalManifest,
+      platforms: ["antigravity", "claude-code"],
+      files: antigravityOnlyFiles
+    });
+
+    const tamperedManifest = ManifestManager.load(tempHome)!;
+    expect(tamperedManifest.files.length).toBe(6);
+    expect(tamperedManifest.platforms).toEqual(["antigravity", "claude-code"]);
+
+    // 4. Run installer for claude-code. Even though files on disk are identical,
+    // it MUST NOT treat as alreadyUpToDate because manifest.files does not cover all items!
+    const reInstaller = new Installer({ homeDir: tempHome, platform: "claude-code" });
+    const result = reInstaller.execute();
+
+    expect(result.success).toBe(true);
+    expect(result.alreadyUpToDate).toBeFalsy();
+
+    // 5. Verify manifest is healed: all 12 files registered
+    const healedManifest = ManifestManager.load(tempHome)!;
+    expect(healedManifest.files.length).toBe(12);
+
+    // 6. Verify uninstaller now cleans up all files without leaving orphans
+    const uninstaller = new Uninstaller({ homeDir: tempHome });
+    const unResult = uninstaller.execute();
+    expect(unResult.success).toBe(true);
+    expect(unResult.removedFiles.length).toBe(12);
+    expect(fs.existsSync(path.join(tempHome, ".claude/skills/code-review/SKILL.md"))).toBe(false);
+    expect(fs.existsSync(path.join(tempHome, ".claude/agents/correctness-reviewer.md"))).toBe(false);
+    expect(fs.existsSync(path.join(tempHome, ".gemini/config/skills/code-review/SKILL.md"))).toBe(false);
+    expect(fs.existsSync(path.join(tempHome, ".agent-code-review.json"))).toBe(false);
+  });
+
+  it("should preserve user customized file mode (e.g. 0600) upon update (N-1)", () => {
+    // 1. Initial installation
+    new Installer({ homeDir: tempHome, platform: "claude-code" }).execute();
+    const skillPath = path.join(tempHome, ".claude/skills/code-review/SKILL.md");
+    expect(fs.existsSync(skillPath)).toBe(true);
+
+    // 2. User manually chmods to 0o600
+    fs.chmodSync(skillPath, 0o600);
+    const initialMode = fs.statSync(skillPath).mode & 0o777;
+    expect(initialMode).toBe(0o600);
+
+    // 3. Force re-install / update
+    new Installer({ homeDir: tempHome, platform: "claude-code", force: true }).execute();
+
+    // 4. Mode must still be 0o600 (not reset to umask 0o644)
+    const updatedMode = fs.statSync(skillPath).mode & 0o777;
+    expect(updatedMode).toBe(0o600);
+  });
+
+  it("should ignore leftover installer tmp files via git ignore (N-2)", () => {
+    // 1. Local installation in git repository
+    new Installer({ homeDir: tempHome, workspaceRoot: tempWorkspace, scope: "local", platform: "antigravity" }).execute();
+
+    // 2. Copy root .gitignore to tempWorkspace so git honors project rules
+    const rootGitignore = fs.readFileSync(path.resolve(".gitignore"), "utf-8");
+    fs.writeFileSync(path.join(tempWorkspace, ".gitignore"), rootGitignore);
+
+    // 3. Simulate a crashed tmp file left behind in the workspace
+    const leftoverTmp = path.join(tempWorkspace, ".agents/agents/correctness-reviewer.md.tmp.1234.abcd");
+    fs.writeFileSync(leftoverTmp, "partial garbage content");
+
+    // 4. git status must ignore the .tmp. file
+    const gitStatus = execSync("git status --porcelain", { cwd: tempWorkspace, encoding: "utf-8" });
+    expect(gitStatus).not.toContain(".tmp.");
+  });
+
+  it("should purge stale .tmp files older than 1 hour even on fast-path alreadyUpToDate and upon uninstall (Issue 1)", () => {
+    // 1. Initial installation
+    const initRes = new Installer({ homeDir: tempHome, platform: "claude-code" }).execute();
+    expect(initRes.success).toBe(true);
+    const skillPath = path.join(tempHome, ".claude/skills/code-review/SKILL.md");
+    const parentDir = path.dirname(skillPath);
+
+    // 2. Simulate a crashed stale .tmp file (mtime 2 hours ago)
+    const staleTmp = path.join(parentDir, "SKILL.md.tmp.1111.aaaa");
+    fs.writeFileSync(staleTmp, "stale content");
+    const twoHoursAgo = (Date.now() - 7200_000) / 1000;
+    fs.utimesSync(staleTmp, twoHoursAgo, twoHoursAgo);
+
+    // Simulate a fresh .tmp file (mtime right now, should not be purged)
+    const freshTmp = path.join(parentDir, "SKILL.md.tmp.2222.bbbb");
+    fs.writeFileSync(freshTmp, "fresh content");
+
+    // 3. Fast-path alreadyUpToDate installation should purge staleTmp without writing any files
+    const fastRes = new Installer({ homeDir: tempHome, platform: "claude-code" }).execute();
+    expect(fastRes.success).toBe(true);
+    expect(fastRes.alreadyUpToDate).toBe(true);
+    expect(fs.existsSync(staleTmp)).toBe(false);
+    expect(fs.existsSync(freshTmp)).toBe(true);
+
+    // 4. Uninstall with force should clean up all remaining .tmp files for managed entries
+    const unResult = new Uninstaller({ homeDir: tempHome, force: true }).execute();
+    expect(unResult.success).toBe(true);
+    expect(fs.existsSync(freshTmp)).toBe(false);
   });
 
   it("should never modify an existing .codex/config.toml", () => {
@@ -241,5 +353,68 @@ describe("Global First Installer Lifecycle", () => {
     // Verify files on disk
     expect(fs.existsSync(path.join(tempHome, ".claude/skills/code-review/SKILL.md"))).toBe(true);
     expect(fs.existsSync(path.join(tempHome, ".agents/skills/code-review/SKILL.md"))).toBe(true);
+  });
+
+  it("should not crash with EISDIR when doctor encounters a managed file replaced by a directory (V-10)", () => {
+    // 1. Install global configuration
+    const installer = new Installer({
+      homeDir: tempHome,
+      workspaceRoot: tempWorkspace,
+      platform: "antigravity"
+    });
+    const installRes = installer.execute();
+    expect(installRes.success).toBe(true);
+
+    // 2. Replace one of the managed agent files with a directory
+    const agentFilePath = path.join(tempHome, ".gemini/config/agents/security-reviewer/agent.md");
+    expect(fs.existsSync(agentFilePath)).toBe(true);
+    fs.unlinkSync(agentFilePath);
+    fs.mkdirSync(agentFilePath); // directory at the same path!
+
+    // 3. Run doctor: it MUST NOT crash with unhandled EISDIR error
+    const diagnosis = Doctor.diagnose({
+      workspaceRoot: tempWorkspace,
+      homeDir: tempHome
+    });
+
+    expect(diagnosis).toBeDefined();
+    expect(diagnosis.globalManifest).not.toBeNull();
+    const integrityCheck = diagnosis.checks.find((c) => c.name === "Global Files Integrity");
+    expect(integrityCheck).toBeDefined();
+    expect(integrityCheck?.status).toBe("warn");
+    expect(integrityCheck?.message).toMatch(/local user customizations or non-file entries/);
+  });
+
+  it("should atomically roll back written files when installation fails mid-write (V-11)", () => {
+    // Set up a directory with mode 0o555 (traversable for lstat during plan(), but unwritable)
+    const skillsDir = path.join(tempHome, ".claude/skills/code-review");
+    fs.mkdirSync(skillsDir, { recursive: true });
+    fs.chmodSync(skillsDir, 0o555);
+
+    try {
+      const installer = new Installer({
+        homeDir: tempHome,
+        workspaceRoot: tempWorkspace,
+        platform: "claude-code"
+      });
+
+      const result = installer.execute();
+      expect(result.success).toBe(false);
+      expect(result.manifestSaved).toBe(false);
+      expect(result.errors[0]).toMatch(/All partially written files have been rolled back/);
+
+      // Verify that NO partial agent files were left behind in ~/.claude/agents
+      const agentsDir = path.join(tempHome, ".claude/agents");
+      if (fs.existsSync(agentsDir)) {
+        const files = fs.readdirSync(agentsDir);
+        expect(files.length).toBe(0);
+      }
+
+      // No manifest file should exist
+      expect(fs.existsSync(path.join(tempHome, ".agent-code-review.json"))).toBe(false);
+    } finally {
+      // Restore permissions for cleanup
+      try { fs.chmodSync(skillsDir, 0o777); } catch { /* ignore */ }
+    }
   });
 });

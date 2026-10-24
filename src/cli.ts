@@ -19,7 +19,6 @@ program
   .option("-p, --platform <platform>", "Target platform (antigravity, claude-code, codex, or all)")
   .option("-d, --dry-run", "Preview changes without modifying the filesystem")
   .option("-f, --force", "Force overwrite of existing files")
-  .option("-y, --yes", "Skip interactive prompts")
   .action((options) => {
     const code = runInit(options);
     process.exit(code);

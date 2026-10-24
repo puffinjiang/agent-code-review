@@ -1,12 +1,14 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import * as crypto from "node:crypto";
 import { ManifestManager, InstallationManifest, ManifestFileEntry } from "./manifest.js";
 import { SupportedPlatform, getAdapter, TemplateFile } from "../../adapters/index.js";
 import { ProcessLock } from "./lock.js";
 
 
 import { resolveManagedPath, LEGACY_SHARED_CONFIG } from "./managed-path.js";
+import { getPackageVersion } from "./version.js";
 
 export type InstallScope = "global" | "local";
 
@@ -39,6 +41,7 @@ export interface InstallResult {
   dryRun: boolean;
   items: InstallPlanItem[];
   manifestSaved: boolean;
+  alreadyUpToDate?: boolean;
   errors: string[];
 }
 
@@ -59,6 +62,79 @@ export class Installer {
     this.dryRun = !!options.dryRun;
     this.force = !!options.force;
     this.templateDir = options.templateDir;
+  }
+
+  /**
+   * N-1 / N-3: 原子替换写入。
+   * 1. 先写入同目录随机临时文件，随后以原子 renameSync 替换，杜绝半截文件与截断风险；
+   * 2. 若目标文件已存在，保留其原有 mode（文件权限，如 chmod 600），防止静默重置；
+   * 3. 失败时自动清理临时文件。
+   */
+  public static writeAtomic(fullPath: string, content: string): void {
+    const parentDir = path.dirname(fullPath);
+    if (!fs.existsSync(parentDir)) {
+      fs.mkdirSync(parentDir, { recursive: true });
+    }
+
+    let existingMode: number | null = null;
+    try {
+      existingMode = fs.statSync(fullPath).mode;
+    } catch {}
+
+    const tmpPath = `${fullPath}.tmp.${process.pid}.${crypto.randomBytes(4).toString("hex")}`;
+    try {
+      fs.writeFileSync(tmpPath, content, "utf-8");
+      if (existingMode !== null) {
+        try {
+          fs.chmodSync(tmpPath, existingMode & 0o7777);
+        } catch {}
+      }
+      fs.renameSync(tmpPath, fullPath);
+    } catch (writeErr) {
+      try { fs.unlinkSync(tmpPath); } catch {}
+      throw writeErr;
+    }
+  }
+
+  /**
+   * 自动清理受管目录下的陈旧 .tmp. 孤儿文件（mtime > 1 小时，防止崩溃残留累积）。
+   * 由 plan 的目标路径驱动，同时覆盖快路径（alreadyUpToDate）与写盘主流程。
+   * 单遍 O(N) 路径归组，杜绝重复 resolveManagedPath 与文件系统扫描 (O-b)。
+   */
+  private purgeStaleTempFiles(baseDir: string, items: InstallPlanItem[]): void {
+    const dirMap = new Map<string, Set<string>>();
+    for (const item of items) {
+      try {
+        const fullPath = resolveManagedPath(baseDir, item.relativePath);
+        const parentDir = path.dirname(fullPath);
+        let baseNames = dirMap.get(parentDir);
+        if (!baseNames) {
+          baseNames = new Set<string>();
+          dirMap.set(parentDir, baseNames);
+        }
+        baseNames.add(path.basename(item.relativePath));
+      } catch {}
+    }
+
+    for (const [parentDir, managedBaseNames] of dirMap.entries()) {
+      try {
+        if (!fs.existsSync(parentDir)) continue;
+        for (const file of fs.readdirSync(parentDir)) {
+          for (const baseName of managedBaseNames) {
+            if (file.startsWith(`${baseName}.tmp.`)) {
+              const tmpFilePath = path.join(parentDir, file);
+              try {
+                const stat = fs.statSync(tmpFilePath);
+                if (Date.now() - stat.mtimeMs > 3600_000) {
+                  fs.unlinkSync(tmpFilePath);
+                }
+              } catch {}
+              break;
+            }
+          }
+        }
+      } catch {}
+    }
   }
 
   public getBaseDir(): string {
@@ -211,8 +287,55 @@ export class Installer {
       };
     }
 
-    // Physical installation acquires exclusive process lock on baseDir.
-    // 加锁失败、写盘失败、清单保存失败都统一转为结构化失败结果，不向 CLI 抛出（D-14）。
+    // A. 无锁快路径（只读校验 + 陈旧临时文件清扫，几十毫秒）：
+    // 若未指定 --force，先快速比对目标平台与当前文件哈希。
+    // 若已覆盖目标平台、版本一致、无冲突、且清单中已完整登记全部待安装文件：
+    // 说明系统已处于最新安装状态，清扫本工具陈旧孤儿临时文件后直接成功返回，完全不加锁、不写新业务文件。
+    if (!this.force) {
+      try {
+        const manifest = ManifestManager.load(baseDir);
+        const currentVersion = getPackageVersion();
+        const targetPlatforms = this.getTargetPlatforms();
+        const hasLegacyEntry = manifest && manifest.files.some((f) => f.path === LEGACY_SHARED_CONFIG);
+        const isVersionCurrent = manifest?.packageVersion === currentVersion;
+        const allCovered = manifest && !hasLegacyEntry && isVersionCurrent && targetPlatforms.every((p) => manifest.platforms.includes(p));
+
+        if (allCovered) {
+          const quickPlan = this.plan();
+          // BUG-2 修复：manifest.files 必须完整登记 quickPlan 中的每一个文件且 hash 一致，防止孤儿文件漏入
+          const manifestMap = new Map(manifest.files.map((f) => [f.path, f.hash]));
+          const allFilesRegistered =
+            quickPlan.items.length > 0 &&
+            quickPlan.items.every((item) => manifestMap.get(item.relativePath) === item.hash);
+
+          if (
+            allFilesRegistered &&
+            quickPlan.conflicts.length === 0 &&
+            quickPlan.items.every((i) => i.action === "skip-identical")
+          ) {
+            this.purgeStaleTempFiles(baseDir, quickPlan.items);
+            // S-2 修复：已安装平台应取 manifest 的全集并集，而不是仅回显本次的目标参数
+            const combinedPlatforms = Array.from(new Set([...manifest.platforms, ...targetPlatforms]));
+            return {
+              scope: this.scope,
+              baseDir,
+              platforms: combinedPlatforms,
+              success: true,
+              dryRun: false,
+              items: quickPlan.items,
+              manifestSaved: false,
+              alreadyUpToDate: true,
+              errors: []
+            };
+          }
+        }
+      } catch {
+        // 快速检查遇异常时平滑进入加锁流程
+      }
+    }
+
+    // B. 加锁流程：进入独占排他锁，执行物理文件安装。
+    // 加锁失败、写盘失败、清单保存失败都统一转为结构化失败结果，不向 CLI 抛出未捕获异常。
     try {
       return this.executeLocked(baseDir);
     } catch (error) {
@@ -234,7 +357,7 @@ export class Installer {
       let items: InstallPlanItem[];
       let conflicts: string[];
       try {
-        // Re-evaluate plan under lock to incorporate any concurrent installations
+        // C. 临界区内双重校验：在锁内重新评估 plan，纳入锁竞争期间其他进程已完成的修改
         ({ items, conflicts } = this.plan());
         resolveManagedPath(baseDir, ".agent-code-review.json");
       } catch (error) {
@@ -258,8 +381,47 @@ export class Installer {
         };
       }
 
-      const now = new Date().toISOString();
+      // 清理本次计划所涉及目录下的陈旧 .tmp. 遗留文件
+      this.purgeStaleTempFiles(baseDir, items);
+
+      // C. 临界区内双重检查：若等待锁期间排在前面的进程已完成全部写入且 manifest 登记完整，无需重复写盘
       const existingManifest = ManifestManager.load(baseDir);
+      const currentVersion = getPackageVersion();
+      const hasLegacyEntry = existingManifest && existingManifest.files.some((f) => f.path === LEGACY_SHARED_CONFIG);
+      const isVersionCurrent = existingManifest?.packageVersion === currentVersion;
+      const allPlatformsCovered = existingManifest && targetPlatforms.every((p) => existingManifest.platforms.includes(p));
+      const hasModifications = items.some((i) => i.action === "create" || i.action === "update");
+
+      // BUG-2 修复：必须核对现有 manifest.files 是否真正登记了本次 plan 的全部文件且哈希一致
+      const existingManifestMap = new Map(existingManifest?.files.map((f) => [f.path, f.hash]) || []);
+      const allFilesRegistered =
+        items.length > 0 &&
+        items.every((item) => existingManifestMap.get(item.relativePath) === item.hash);
+
+      if (
+        !hasModifications &&
+        !hasLegacyEntry &&
+        !this.force &&
+        allFilesRegistered &&
+        allPlatformsCovered &&
+        isVersionCurrent
+      ) {
+        // S-2 修复：已安装平台应取 manifest 的全集并集
+        const combinedPlatforms = Array.from(new Set([...existingManifest.platforms, ...targetPlatforms]));
+        return {
+          scope: this.scope,
+          baseDir,
+          platforms: combinedPlatforms,
+          success: true,
+          dryRun: false,
+          items,
+          manifestSaved: false,
+          alreadyUpToDate: true,
+          errors: []
+        };
+      }
+
+      const now = new Date().toISOString();
       const manifestFilesMap = new Map<string, ManifestFileEntry>();
 
       if (existingManifest) {
@@ -272,52 +434,95 @@ export class Installer {
         }
       }
 
-      for (const item of items) {
-        const fullPath = resolveManagedPath(baseDir, item.relativePath);
-        const parentDir = path.dirname(fullPath);
+      // V-11 修复：写入事务跟踪与中途失败原子回滚
+      // 避免写中途失败（如 EACCES、磁盘已满）在磁盘上留下未入 manifest 的无主孤儿文件
+      const newlyCreatedPaths: string[] = [];
+      const previousFileContents = new Map<string, string>();
 
-        if (item.action === "create" || item.action === "update") {
-          if (!fs.existsSync(parentDir)) {
-            fs.mkdirSync(parentDir, { recursive: true });
+      try {
+        for (const item of items) {
+          const fullPath = resolveManagedPath(baseDir, item.relativePath);
+          const parentDir = path.dirname(fullPath);
+
+          if (item.action === "create" || item.action === "update") {
+            if (!fs.existsSync(parentDir)) {
+              fs.mkdirSync(parentDir, { recursive: true });
+            }
+
+            if (item.action === "update" && fs.existsSync(fullPath)) {
+              previousFileContents.set(fullPath, fs.readFileSync(fullPath, "utf-8"));
+            } else if (item.action === "create") {
+              newlyCreatedPaths.push(fullPath);
+            }
+
+            Installer.writeAtomic(fullPath, item.sourceContent);
           }
 
-          fs.writeFileSync(fullPath, item.sourceContent, "utf-8");
+          manifestFilesMap.set(item.relativePath, {
+            path: item.relativePath,
+            hash: item.hash,
+            platform: item.platform,
+            installedAt: now
+          });
         }
 
-        manifestFilesMap.set(item.relativePath, {
-          path: item.relativePath,
-          hash: item.hash,
-          platform: item.platform,
-          installedAt: now
-        });
+        const combinedPlatforms = Array.from(
+          new Set([...(existingManifest?.platforms || []), ...targetPlatforms])
+        );
+
+        const manifest: InstallationManifest = {
+          schemaVersion: "1.0.0",
+          packageVersion: getPackageVersion(),
+          scope: this.scope,
+          platforms: combinedPlatforms,
+          installedAt: existingManifest?.installedAt || now,
+          updatedAt: now,
+          files: Array.from(manifestFilesMap.values())
+        };
+
+        ManifestManager.save(baseDir, manifest);
+
+        return {
+          scope: this.scope,
+          baseDir,
+          platforms: combinedPlatforms,
+          success: true,
+          dryRun: false,
+          items,
+          manifestSaved: true,
+          errors: []
+        };
+      } catch (err: unknown) {
+        // 回滚本次新创建的文件
+        for (const createdPath of newlyCreatedPaths) {
+          try {
+            if (fs.existsSync(createdPath)) fs.unlinkSync(createdPath);
+          } catch {
+            // best effort cleanup
+          }
+        }
+        // 恢复被更新文件的原始内容（走原子写入，防止回滚中断引发截断损坏）
+        for (const [updatedPath, originalContent] of previousFileContents.entries()) {
+          try {
+            Installer.writeAtomic(updatedPath, originalContent);
+          } catch {
+            // best effort restore
+          }
+        }
+
+        return {
+          scope: this.scope,
+          baseDir,
+          platforms: targetPlatforms,
+          success: false,
+          dryRun: false,
+          items,
+          manifestSaved: false,
+          errors: [
+            `Installation failed during file write: ${(err as Error).message}. All partially written files have been rolled back.`
+          ]
+        };
       }
-
-      const combinedPlatforms = Array.from(
-        new Set([...(existingManifest?.platforms || []), ...targetPlatforms])
-      );
-
-      const manifest: InstallationManifest = {
-        schemaVersion: "1.0.0",
-        packageVersion: "0.1.0",
-        scope: this.scope,
-        platforms: combinedPlatforms,
-        installedAt: existingManifest?.installedAt || now,
-        updatedAt: now,
-        files: Array.from(manifestFilesMap.values())
-      };
-
-      ManifestManager.save(baseDir, manifest);
-
-      return {
-        scope: this.scope,
-        baseDir,
-        platforms: combinedPlatforms,
-        success: true,
-        dryRun: false,
-        items,
-        manifestSaved: true,
-        errors: []
-      };
     });
   }
 }

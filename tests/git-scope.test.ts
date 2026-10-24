@@ -166,4 +166,48 @@ describe("Git Scope Resolver", () => {
     expect(result.patch).toContain('b/sub-b/untracked-in-b.txt');
     expect(result.patch).toContain('b/untracked-in-root.txt');
   });
+
+  it("should cap untracked file patch size and omit massive file contents (V-8)", () => {
+    const resolver = new GitScopeResolver(tempDir);
+    const largeFilePath = path.join(tempDir, "large-untracked.txt");
+    // Write 2 MB of text
+    fs.writeFileSync(largeFilePath, "a".repeat(2 * 1024 * 1024) + "\n");
+
+    const result = resolver.resolve({
+      target: "uncommitted",
+      maxUntrackedFileSize: 1 * 1024 * 1024 // 1 MB cap
+    });
+
+    expect(result.untrackedFiles).toContain("large-untracked.txt");
+    expect(result.changedFiles).toContain("large-untracked.txt");
+    // Patch should indicate omission rather than dumping 2MB into memory
+    expect(result.patch).toContain("exceeds inline limit (1 MB); content omitted from diff");
+    expect(result.patch).not.toContain("a".repeat(1000));
+  });
+
+  it("should enforce total untracked patch size cap across multiple files (V-8)", () => {
+    const resolver = new GitScopeResolver(tempDir);
+    // Create 3 files of 400KB each
+    fs.writeFileSync(path.join(tempDir, "file1.txt"), "1".repeat(400 * 1024) + "\n");
+    fs.writeFileSync(path.join(tempDir, "file2.txt"), "2".repeat(400 * 1024) + "\n");
+    fs.writeFileSync(path.join(tempDir, "file3.txt"), "3".repeat(400 * 1024) + "\n");
+
+    const result = resolver.resolve({
+      target: "uncommitted",
+      maxTotalUntrackedSize: 600 * 1024 // 600 KB total cap
+    });
+
+    expect(result.untrackedFiles).toHaveLength(3);
+    // At least one file should hit the total review limit
+    expect(result.patch).toContain("Total untracked files review limit");
+  });
+
+  it("should handle buffer limit exceeded with clear descriptive error instead of unhandled crash (V-12)", () => {
+    const resolver = new GitScopeResolver(tempDir);
+    // Test with a tiny maxBuffer in runGit to verify ENOBUFS diagnostic messaging
+    // @ts-expect-error test private method error handling
+    expect(() => resolver.runGit(["status"], false, 10)).toThrow(
+      /Git command output exceeded buffer limit.*Consider scoping review/
+    );
+  });
 });

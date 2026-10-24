@@ -78,18 +78,30 @@ export class Doctor {
         message: `Global configuration active for [${globalPlatforms}] (version ${globalManifest.packageVersion}).`
       });
 
-      // Verify global files
+      // Verify global files (V-10 修复：对目录、损坏符号链接及权限异常做安全防护，防止 EISDIR 崩溃)
       let missing = 0;
       let modified = 0;
       for (const entry of globalManifest.files) {
         let full: string;
         try { full = resolveManagedPath(homeDir, entry.path); }
         catch { missing++; continue; }
-        if (!fs.existsSync(full)) {
-          missing++;
-        } else {
-          const currentHash = ManifestManager.computeHash(fs.readFileSync(full, "utf-8"));
-          if (currentHash !== entry.hash) {
+        try {
+          const stat = fs.lstatSync(full);
+          if (!stat.isFile()) {
+            // 被替换成了目录或特殊文件类型
+            modified++;
+          } else {
+            const currentHash = ManifestManager.computeHash(fs.readFileSync(full, "utf-8"));
+            if (currentHash !== entry.hash) {
+              modified++;
+            }
+          }
+        } catch (error) {
+          const code = (error as NodeJS.ErrnoException).code;
+          if (code === "ENOENT") {
+            missing++;
+          } else {
+            // EISDIR, EACCES 或其他读取异常，优雅归类为 modified/abnormal 而非直接抛出堆栈崩溃
             modified++;
           }
         }
@@ -106,7 +118,7 @@ export class Doctor {
         checks.push({
           name: "Global Files Integrity",
           status: "warn",
-          message: `${modified} global managed file(s) have local user customizations.`
+          message: `${modified} global managed file(s) have local user customizations or non-file entries.`
         });
       } else {
         checks.push({
@@ -138,6 +150,54 @@ export class Doctor {
         status: "pass",
         message: `Project-level configuration present in workspace for [${localPlatforms}].`
       });
+
+      // Verify local files integrity (V-10 防护)
+      let localMissing = 0;
+      let localModified = 0;
+      for (const entry of localManifest.files) {
+        let full: string;
+        try { full = resolveManagedPath(workspaceRoot, entry.path); }
+        catch { localMissing++; continue; }
+        try {
+          const stat = fs.lstatSync(full);
+          if (!stat.isFile()) {
+            localModified++;
+          } else {
+            const currentHash = ManifestManager.computeHash(fs.readFileSync(full, "utf-8"));
+            if (currentHash !== entry.hash) {
+              localModified++;
+            }
+          }
+        } catch (error) {
+          const code = (error as NodeJS.ErrnoException).code;
+          if (code === "ENOENT") {
+            localMissing++;
+          } else {
+            localModified++;
+          }
+        }
+      }
+
+      if (localMissing > 0) {
+        overallHealthy = false;
+        checks.push({
+          name: "Local Files Integrity",
+          status: "fail",
+          message: `${localMissing} local managed file(s) are missing on disk.`
+        });
+      } else if (localModified > 0) {
+        checks.push({
+          name: "Local Files Integrity",
+          status: "warn",
+          message: `${localModified} local managed file(s) have local user customizations or non-file entries.`
+        });
+      } else {
+        checks.push({
+          name: "Local Files Integrity",
+          status: "pass",
+          message: `All ${localManifest.files.length} local files match installation hashes.`
+        });
+      }
 
       if (globalManifest) {
         checks.push({
