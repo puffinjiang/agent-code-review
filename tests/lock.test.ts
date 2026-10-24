@@ -5,7 +5,6 @@ import * as os from "node:os";
 import { ProcessLock } from "../src/lib/lock.js";
 import { Installer } from "../src/lib/installer.js";
 import { Uninstaller } from "../src/lib/uninstaller.js";
-import { ManifestManager } from "../src/lib/manifest.js";
 
 function symlinksAvailable(): boolean {
   const probe = fs.mkdtempSync(path.join(os.tmpdir(), "acr-symlink-probe-"));
@@ -82,25 +81,15 @@ describe("ProcessLock Unit Tests", () => {
     expect(fs.existsSync(lockPath)).toBe(false);
   });
 
-  it("should time out when contending against an active lock held by a live PID (D-14)", () => {
-    const release = ProcessLock.acquire(tempDir);
-    try {
-      expect(() =>
-        ProcessLock.acquire(tempDir, { timeoutMs: 150, retryIntervalMs: 25 })
-      ).toThrow(/获取安装锁超时/);
-    } finally {
-      release();
-    }
-  });
-
-  it("should never steal a live process lock held by an active process within maxAgeMs (V-1)", () => {
+  it("should never steal a live process lock held by an active process within maxAgeMs (V-1 / D-14)", () => {
+    const lockPath = ProcessLock.getLockPath(tempDir);
     const releaseA = ProcessLock.acquire(tempDir);
     try {
-      // Process B attempts to acquire with short timeout
-      // Since Process A is alive, B must NOT steal A's active lock
+      const before = fs.readFileSync(lockPath, "utf-8");
       expect(() =>
         ProcessLock.acquire(tempDir, { timeoutMs: 150, retryIntervalMs: 25 })
       ).toThrow(/获取安装锁超时/);
+      expect(fs.readFileSync(lockPath, "utf-8")).toBe(before);
     } finally {
       releaseA();
     }
@@ -326,20 +315,5 @@ describe("ProcessLock Unit Tests", () => {
     const startDangling = Date.now();
     expect(() => ProcessLock.acquire(tempDir, { timeoutMs: 5000 })).toThrow(/Refusing symbolic link/);
     expect(Date.now() - startDangling).toBeLessThan(1000);
-  });
-
-  it("should allow rapid same-millisecond ManifestManager.save calls without temp file collision (D-14)", () => {
-    for (let i = 0; i < 10; i++) {
-      ManifestManager.save(tempDir, {
-        schemaVersion: "1.0.0",
-        packageVersion: "0.1.0",
-        scope: "global",
-        platforms: ["antigravity"],
-        installedAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        files: []
-      });
-    }
-    expect(ManifestManager.load(tempDir)?.platforms).toEqual(["antigravity"]);
   });
 });

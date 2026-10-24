@@ -1,7 +1,5 @@
 import * as fs from "node:fs";
-import * as path from "node:path";
 import * as crypto from "node:crypto";
-import * as os from "node:os";
 
 import { resolveManagedPath } from "./managed-path.js";
 
@@ -39,14 +37,6 @@ export class ManifestManager {
 
   public static getManifestPath(baseDir: string): string {
     return resolveManagedPath(baseDir, MANIFEST_FILENAME);
-  }
-
-  public static getGlobalManifestPath(homedir: string = os.homedir()): string {
-    return path.join(homedir, MANIFEST_FILENAME);
-  }
-
-  public static getLocalManifestPath(workspaceRoot: string = process.cwd()): string {
-    return path.join(workspaceRoot, MANIFEST_FILENAME);
   }
 
   public static load(baseDir: string): InstallationManifest | null {

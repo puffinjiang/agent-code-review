@@ -193,9 +193,10 @@ describe("Global First Installer Lifecycle", () => {
     expect(gitStatus).not.toContain(".tmp.");
   });
 
-  it("should purge stale .tmp files older than 1 hour during writeAtomic and upon uninstall (Issue 1)", () => {
+  it("should purge stale .tmp files older than 1 hour even on fast-path alreadyUpToDate and upon uninstall (Issue 1)", () => {
     // 1. Initial installation
-    new Installer({ homeDir: tempHome, platform: "claude-code" }).execute();
+    const initRes = new Installer({ homeDir: tempHome, platform: "claude-code" }).execute();
+    expect(initRes.success).toBe(true);
     const skillPath = path.join(tempHome, ".claude/skills/code-review/SKILL.md");
     const parentDir = path.dirname(skillPath);
 
@@ -205,12 +206,14 @@ describe("Global First Installer Lifecycle", () => {
     const twoHoursAgo = (Date.now() - 7200_000) / 1000;
     fs.utimesSync(staleTmp, twoHoursAgo, twoHoursAgo);
 
-    // Simulate a fresh .tmp file (mtime right now, should not be deleted by writeAtomic)
+    // Simulate a fresh .tmp file (mtime right now, should not be purged)
     const freshTmp = path.join(parentDir, "SKILL.md.tmp.2222.bbbb");
     fs.writeFileSync(freshTmp, "fresh content");
 
-    // 3. Next writeAtomic call should purge staleTmp but keep freshTmp
-    Installer.writeAtomic(skillPath, "# Updated Skill");
+    // 3. Fast-path alreadyUpToDate installation should purge staleTmp without writing any files
+    const fastRes = new Installer({ homeDir: tempHome, platform: "claude-code" }).execute();
+    expect(fastRes.success).toBe(true);
+    expect(fastRes.alreadyUpToDate).toBe(true);
     expect(fs.existsSync(staleTmp)).toBe(false);
     expect(fs.existsSync(freshTmp)).toBe(true);
 

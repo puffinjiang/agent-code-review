@@ -76,22 +76,6 @@ export class Installer {
       fs.mkdirSync(parentDir, { recursive: true });
     }
 
-    // 自动清理同目录下遗留的陈旧 .tmp. 文件（mtime > 1 小时，防止崩溃残留累积）
-    try {
-      const baseName = path.basename(fullPath);
-      for (const file of fs.readdirSync(parentDir)) {
-        if (file.startsWith(`${baseName}.tmp.`)) {
-          const tmpFilePath = path.join(parentDir, file);
-          try {
-            const stat = fs.statSync(tmpFilePath);
-            if (Date.now() - stat.mtimeMs > 3600_000) {
-              fs.unlinkSync(tmpFilePath);
-            }
-          } catch {}
-        }
-      }
-    } catch {}
-
     let existingMode: number | null = null;
     try {
       existingMode = fs.statSync(fullPath).mode;
@@ -109,6 +93,47 @@ export class Installer {
     } catch (writeErr) {
       try { fs.unlinkSync(tmpPath); } catch {}
       throw writeErr;
+    }
+  }
+
+  /**
+   * 自动清理受管目录下的陈旧 .tmp. 孤儿文件（mtime > 1 小时，防止崩溃残留累积）。
+   * 由 plan 的目标路径驱动，同时覆盖快路径（alreadyUpToDate）与写盘主流程。
+   * 单遍 O(N) 路径归组，杜绝重复 resolveManagedPath 与文件系统扫描 (O-b)。
+   */
+  private purgeStaleTempFiles(baseDir: string, items: InstallPlanItem[]): void {
+    const dirMap = new Map<string, Set<string>>();
+    for (const item of items) {
+      try {
+        const fullPath = resolveManagedPath(baseDir, item.relativePath);
+        const parentDir = path.dirname(fullPath);
+        let baseNames = dirMap.get(parentDir);
+        if (!baseNames) {
+          baseNames = new Set<string>();
+          dirMap.set(parentDir, baseNames);
+        }
+        baseNames.add(path.basename(item.relativePath));
+      } catch {}
+    }
+
+    for (const [parentDir, managedBaseNames] of dirMap.entries()) {
+      try {
+        if (!fs.existsSync(parentDir)) continue;
+        for (const file of fs.readdirSync(parentDir)) {
+          for (const baseName of managedBaseNames) {
+            if (file.startsWith(`${baseName}.tmp.`)) {
+              const tmpFilePath = path.join(parentDir, file);
+              try {
+                const stat = fs.statSync(tmpFilePath);
+                if (Date.now() - stat.mtimeMs > 3600_000) {
+                  fs.unlinkSync(tmpFilePath);
+                }
+              } catch {}
+              break;
+            }
+          }
+        }
+      } catch {}
     }
   }
 
@@ -262,10 +287,10 @@ export class Installer {
       };
     }
 
-    // A. 无锁快路径（只读检查，几十毫秒）：
+    // A. 无锁快路径（只读校验 + 陈旧临时文件清扫，几十毫秒）：
     // 若未指定 --force，先快速比对目标平台与当前文件哈希。
     // 若已覆盖目标平台、版本一致、无冲突、且清单中已完整登记全部待安装文件：
-    // 说明系统已处于最新安装状态，直接成功返回，完全不加锁、不写盘。
+    // 说明系统已处于最新安装状态，清扫本工具陈旧孤儿临时文件后直接成功返回，完全不加锁、不写新业务文件。
     if (!this.force) {
       try {
         const manifest = ManifestManager.load(baseDir);
@@ -288,6 +313,7 @@ export class Installer {
             quickPlan.conflicts.length === 0 &&
             quickPlan.items.every((i) => i.action === "skip-identical")
           ) {
+            this.purgeStaleTempFiles(baseDir, quickPlan.items);
             // S-2 修复：已安装平台应取 manifest 的全集并集，而不是仅回显本次的目标参数
             const combinedPlatforms = Array.from(new Set([...manifest.platforms, ...targetPlatforms]));
             return {
@@ -354,6 +380,9 @@ export class Installer {
           ]
         };
       }
+
+      // 清理本次计划所涉及目录下的陈旧 .tmp. 遗留文件
+      this.purgeStaleTempFiles(baseDir, items);
 
       // C. 临界区内双重检查：若等待锁期间排在前面的进程已完成全部写入且 manifest 登记完整，无需重复写盘
       const existingManifest = ManifestManager.load(baseDir);
