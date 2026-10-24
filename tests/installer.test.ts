@@ -242,4 +242,67 @@ describe("Global First Installer Lifecycle", () => {
     expect(fs.existsSync(path.join(tempHome, ".claude/skills/code-review/SKILL.md"))).toBe(true);
     expect(fs.existsSync(path.join(tempHome, ".agents/skills/code-review/SKILL.md"))).toBe(true);
   });
+
+  it("should not crash with EISDIR when doctor encounters a managed file replaced by a directory (V-10)", () => {
+    // 1. Install global configuration
+    const installer = new Installer({
+      homeDir: tempHome,
+      workspaceRoot: tempWorkspace,
+      platform: "antigravity"
+    });
+    const installRes = installer.execute();
+    expect(installRes.success).toBe(true);
+
+    // 2. Replace one of the managed agent files with a directory
+    const agentFilePath = path.join(tempHome, ".gemini/config/agents/security-reviewer/agent.md");
+    expect(fs.existsSync(agentFilePath)).toBe(true);
+    fs.unlinkSync(agentFilePath);
+    fs.mkdirSync(agentFilePath); // directory at the same path!
+
+    // 3. Run doctor: it MUST NOT crash with unhandled EISDIR error
+    const diagnosis = Doctor.diagnose({
+      workspaceRoot: tempWorkspace,
+      homeDir: tempHome
+    });
+
+    expect(diagnosis).toBeDefined();
+    expect(diagnosis.globalManifest).not.toBeNull();
+    const integrityCheck = diagnosis.checks.find((c) => c.name === "Global Files Integrity");
+    expect(integrityCheck).toBeDefined();
+    expect(integrityCheck?.status).toBe("warn");
+    expect(integrityCheck?.message).toMatch(/local user customizations or non-file entries/);
+  });
+
+  it("should atomically roll back written files when installation fails mid-write (V-11)", () => {
+    // Set up a directory with mode 0o555 (traversable for lstat during plan(), but unwritable)
+    const skillsDir = path.join(tempHome, ".claude/skills/code-review");
+    fs.mkdirSync(skillsDir, { recursive: true });
+    fs.chmodSync(skillsDir, 0o555);
+
+    try {
+      const installer = new Installer({
+        homeDir: tempHome,
+        workspaceRoot: tempWorkspace,
+        platform: "claude-code"
+      });
+
+      const result = installer.execute();
+      expect(result.success).toBe(false);
+      expect(result.manifestSaved).toBe(false);
+      expect(result.errors[0]).toMatch(/All partially written files have been rolled back/);
+
+      // Verify that NO partial agent files were left behind in ~/.claude/agents
+      const agentsDir = path.join(tempHome, ".claude/agents");
+      if (fs.existsSync(agentsDir)) {
+        const files = fs.readdirSync(agentsDir);
+        expect(files.length).toBe(0);
+      }
+
+      // No manifest file should exist
+      expect(fs.existsSync(path.join(tempHome, ".agent-code-review.json"))).toBe(false);
+    } finally {
+      // Restore permissions for cleanup
+      try { fs.chmodSync(skillsDir, 0o777); } catch { /* ignore */ }
+    }
+  });
 });

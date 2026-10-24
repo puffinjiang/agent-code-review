@@ -2,10 +2,16 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
+export const MAX_UNTRACKED_FILE_SIZE = 1 * 1024 * 1024; // 1 MB 单文件上限 (V-8)
+export const MAX_TOTAL_UNTRACKED_SIZE = 10 * 1024 * 1024; // 10 MB 未跟踪补丁总容量上限 (V-8)
+export const DEFAULT_GIT_MAX_BUFFER = 64 * 1024 * 1024; // 64 MB git 缓冲区 (V-12)
+
 export interface GitScopeOptions {
   cwd?: string;
   target?: string;
   includeUntracked?: boolean;
+  maxUntrackedFileSize?: number;
+  maxTotalUntrackedSize?: number;
 }
 
 export interface GitScopeResult {
@@ -28,17 +34,22 @@ export class GitScopeResolver {
     this.cwd = cwd;
   }
 
-  private runGit(args: string[], runInRepoRoot: boolean = false): string {
+  private runGit(args: string[], runInRepoRoot: boolean = false, maxBuffer = DEFAULT_GIT_MAX_BUFFER): string {
     const execCwd = runInRepoRoot && this.repoRoot ? this.repoRoot : this.cwd;
     try {
       return execFileSync("git", args, {
         cwd: execCwd,
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "pipe"],
-        maxBuffer: 10 * 1024 * 1024
+        maxBuffer
       });
     } catch (err: unknown) {
-      const e = err as { stderr?: string; message: string };
+      const e = err as { code?: string; stderr?: string; message: string };
+      if (e.code === "ENOBUFS") {
+        throw new Error(
+          `Git command output exceeded buffer limit (${(maxBuffer / (1024 * 1024)).toFixed(0)} MB) [git ${args.join(" ")}]: Consider scoping review with revision ranges or specific paths.`
+        );
+      }
       throw new Error(`Git command failed [git ${args.join(" ")}]: ${e.stderr || e.message}`);
     }
   }
@@ -78,6 +89,8 @@ export class GitScopeResolver {
       throw new Error("Git target must be a revision or range, not options or whitespace");
     }
     const includeUntracked = options.includeUntracked !== false;
+    const maxUntrackedFileSize = options.maxUntrackedFileSize ?? MAX_UNTRACKED_FILE_SIZE;
+    const maxTotalUntrackedSize = options.maxTotalUntrackedSize ?? MAX_TOTAL_UNTRACKED_SIZE;
 
     let patch = "";
     let changedFiles: string[] = [];
@@ -130,24 +143,65 @@ export class GitScopeResolver {
       }
 
       // Generate diff-like patches for untracked files so reviewers can inspect them
+      // V-8 修复：未跟踪文件单文件上限、总容量上限与零数组分配行前缀，消除 4-8x 内存放大与 OOM
       if (newFiles.length > 0) {
         const untrackedPatches: string[] = [];
+        let accumulatedBytes = 0;
+        let totalLimitReached = false;
+
         for (const uf of newFiles) {
           const fullPath = path.resolve(repoRoot, uf);
           // Never dereference a worktree symlink while collecting review context.
           try {
             const stat = fs.lstatSync(fullPath);
             if (!stat.isFile() && !stat.isSymbolicLink()) continue;
+
+            const quoted = JSON.stringify(`b/${uf}`);
+            const mode = stat.isSymbolicLink() ? "120000" : "100644";
+
+            if (totalLimitReached) {
+              untrackedPatches.push(
+                `diff --git ${JSON.stringify(`a/${uf}`)} ${quoted}\nnew file mode ${mode}\n--- /dev/null\n+++ ${quoted}\n@@ -0,0 +1 @@\n+ [Total untracked files review limit (${(maxTotalUntrackedSize / (1024 * 1024)).toFixed(0)} MB) reached; content omitted from diff]`
+              );
+              continue;
+            }
+
+            if (stat.isFile() && stat.size > maxUntrackedFileSize) {
+              untrackedPatches.push(
+                `diff --git ${JSON.stringify(`a/${uf}`)} ${quoted}\nnew file mode ${mode}\n--- /dev/null\n+++ ${quoted}\n@@ -0,0 +1 @@\n+ [Untracked file size ${(stat.size / (1024 * 1024)).toFixed(2)} MB exceeds inline limit (${(maxUntrackedFileSize / (1024 * 1024)).toFixed(0)} MB); content omitted from diff]`
+              );
+              continue;
+            }
+
+            if (accumulatedBytes + stat.size > maxTotalUntrackedSize) {
+              totalLimitReached = true;
+              untrackedPatches.push(
+                `diff --git ${JSON.stringify(`a/${uf}`)} ${quoted}\nnew file mode ${mode}\n--- /dev/null\n+++ ${quoted}\n@@ -0,0 +1 @@\n+ [Total untracked files review limit (${(maxTotalUntrackedSize / (1024 * 1024)).toFixed(0)} MB) reached; content omitted from diff]`
+              );
+              continue;
+            }
+
             const content = stat.isSymbolicLink()
               ? fs.readlinkSync(fullPath)
               : fs.readFileSync(fullPath, "utf-8");
             if (content.includes("\0")) continue; // binary data is not source context
-            const lines = content ? content.split("\n") : [];
-            if (content.endsWith("\n")) lines.pop();
-            const addedLines = lines.map((l) => `+${l}`).join("\n");
-            const quoted = JSON.stringify(`b/${uf}`);
+
+            accumulatedBytes += stat.size;
+
+            // 零数组分配行处理：使用单次原生正则替换消除 split + map + join 产生的海量中间数组对象
+            const endsWithNewline = content.endsWith("\n");
+            const trimmed = endsWithNewline ? content.slice(0, -1) : content;
+            let lineCount = 0;
+            if (trimmed.length > 0) {
+              lineCount = 1;
+              for (let i = 0; i < trimmed.length; i++) {
+                if (trimmed.charCodeAt(i) === 10) lineCount++;
+              }
+            }
+            const addedLines = trimmed.length > 0 ? "+" + trimmed.replace(/\n/g, "\n+") : "";
+
             untrackedPatches.push(
-              `diff --git ${JSON.stringify(`a/${uf}`)} ${quoted}\nnew file mode ${stat.isSymbolicLink() ? "120000" : "100644"}\n--- /dev/null\n+++ ${quoted}\n${lines.length ? `@@ -0,0 +1,${lines.length} @@\n${addedLines}${content.endsWith("\n") ? "\n" : "\n\\ No newline at end of file\n"}` : ""}`
+              `diff --git ${JSON.stringify(`a/${uf}`)} ${quoted}\nnew file mode ${mode}\n--- /dev/null\n+++ ${quoted}\n${lineCount ? `@@ -0,0 +1,${lineCount} @@\n${addedLines}${endsWithNewline ? "\n" : "\n\\ No newline at end of file\n"}` : ""}`
             );
           } catch (err) {
             throw new Error(`Cannot read worktree file '${uf}': ${(err as Error).message}`);

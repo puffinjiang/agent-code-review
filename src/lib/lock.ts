@@ -168,15 +168,23 @@ export class ProcessLock {
       // 锁已存在：判断是否过期
       const stat = this.lstatNoSymlink(lockPath);
       if (stat) {
-        const age = Date.now() - stat.mtimeMs;
         const data = this.readLock(lockPath);
-        let stale = age > staleMs;
-        if (!stale && data && !this.isPidAlive(data.pid)) stale = true;
-        // 损坏/无法解析的锁文件：本实现从不产生半写入锁，超过 1s 即可视为残留
-        if (!stale && !data && age > 1000) stale = true;
-        if (stale) {
-          this.breakStale(lockPath, data?.token ?? null);
-          continue;
+        if (data && typeof data.pid === "number") {
+          // V-1 修复：只要持锁者 PID 依然存活，绝不能仅凭 age 过期破锁（防止活锁被抢占导致并发写入冲突）
+          if (!this.isPidAlive(data.pid)) {
+            // 持有者进程已死亡，确认为孤立死锁，安全破锁
+            this.breakStale(lockPath, data.token ?? null);
+            continue;
+          }
+          // 持有者进程仍然存活：互斥生效，等待持有者释放
+        } else {
+          // V-6 修复：非 ACR 锁结构的文件（外来文件或用户自定义文件），绝不能判定为 stale 并无条件删除
+          // 若文件刚被创建（age <= 500ms），可能处于原子写入的极短过渡期，给予重试机会；
+          // 超过 500ms 仍无法解析为有效 ACR 锁，判定为外来文件冲突，立即拒绝并报错保护用户数据。
+          const age = Date.now() - stat.mtimeMs;
+          if (age > 500) {
+            throw new Error(`Lock path '${lockPath}' contains an invalid or foreign file. Refusing to overwrite.`);
+          }
         }
       }
 
@@ -186,15 +194,40 @@ export class ProcessLock {
     throw new Error(`Failed to acquire lock on '${lockPath}' within ${timeoutMs}ms.`);
   }
 
-  /** 仅在锁仍属于本次获取（token 一致）时删除，避免误删他人在破锁后获取的新锁。 */
+  /**
+   * V-2 修复：以原子方式释放锁，消除 token 校验与 unlink 分离产生的 TOCTOU 竞态。
+   * 先原子 rename 至独占回收路径断开 lockPath 引用，核验 token 属于自己后再删除；
+   * 若窗口内已由他人破锁或更替，将移走的锁文件还原，绝不误删他人的有效锁。
+   */
   private static release(lockPath: string, token: string): void {
+    const trashPath = this.uniqueSibling(lockPath, "release");
     try {
       const stat = fs.lstatSync(lockPath);
       if (stat.isSymbolicLink()) return;
-      const data = this.readLock(lockPath);
-      if (data && data.token === token) fs.unlinkSync(lockPath);
+
+      const current = this.readLock(lockPath);
+      if (!current || current.token !== token) return;
+
+      fs.renameSync(lockPath, trashPath);
     } catch {
-      // Lock already gone or unreadable: nothing to release
+      // 锁已被删除或不可访问，无需释放
+      return;
+    }
+
+    try {
+      const moved = this.readLock(trashPath);
+      if (moved && moved.token === token) {
+        try { fs.unlinkSync(trashPath); } catch { /* ignore */ }
+      } else {
+        // 极短窗口内移走的是他人的新锁：原子移回恢复
+        try {
+          fs.renameSync(trashPath, lockPath);
+        } catch {
+          try { fs.unlinkSync(trashPath); } catch { /* ignore */ }
+        }
+      }
+    } catch {
+      try { fs.unlinkSync(trashPath); } catch { /* ignore */ }
     }
   }
 

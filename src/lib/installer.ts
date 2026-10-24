@@ -272,52 +272,95 @@ export class Installer {
         }
       }
 
-      for (const item of items) {
-        const fullPath = resolveManagedPath(baseDir, item.relativePath);
-        const parentDir = path.dirname(fullPath);
+      // V-11 修复：写入事务跟踪与中途失败原子回滚
+      // 避免写中途失败（如 EACCES、磁盘已满）在磁盘上留下未入 manifest 的无主孤儿文件
+      const newlyCreatedPaths: string[] = [];
+      const previousFileContents = new Map<string, string>();
 
-        if (item.action === "create" || item.action === "update") {
-          if (!fs.existsSync(parentDir)) {
-            fs.mkdirSync(parentDir, { recursive: true });
+      try {
+        for (const item of items) {
+          const fullPath = resolveManagedPath(baseDir, item.relativePath);
+          const parentDir = path.dirname(fullPath);
+
+          if (item.action === "create" || item.action === "update") {
+            if (!fs.existsSync(parentDir)) {
+              fs.mkdirSync(parentDir, { recursive: true });
+            }
+
+            if (item.action === "update" && fs.existsSync(fullPath)) {
+              previousFileContents.set(fullPath, fs.readFileSync(fullPath, "utf-8"));
+            } else if (item.action === "create") {
+              newlyCreatedPaths.push(fullPath);
+            }
+
+            fs.writeFileSync(fullPath, item.sourceContent, "utf-8");
           }
 
-          fs.writeFileSync(fullPath, item.sourceContent, "utf-8");
+          manifestFilesMap.set(item.relativePath, {
+            path: item.relativePath,
+            hash: item.hash,
+            platform: item.platform,
+            installedAt: now
+          });
         }
 
-        manifestFilesMap.set(item.relativePath, {
-          path: item.relativePath,
-          hash: item.hash,
-          platform: item.platform,
-          installedAt: now
-        });
+        const combinedPlatforms = Array.from(
+          new Set([...(existingManifest?.platforms || []), ...targetPlatforms])
+        );
+
+        const manifest: InstallationManifest = {
+          schemaVersion: "1.0.0",
+          packageVersion: "0.1.0",
+          scope: this.scope,
+          platforms: combinedPlatforms,
+          installedAt: existingManifest?.installedAt || now,
+          updatedAt: now,
+          files: Array.from(manifestFilesMap.values())
+        };
+
+        ManifestManager.save(baseDir, manifest);
+
+        return {
+          scope: this.scope,
+          baseDir,
+          platforms: combinedPlatforms,
+          success: true,
+          dryRun: false,
+          items,
+          manifestSaved: true,
+          errors: []
+        };
+      } catch (err: unknown) {
+        // 回滚本次新创建的文件
+        for (const createdPath of newlyCreatedPaths) {
+          try {
+            if (fs.existsSync(createdPath)) fs.unlinkSync(createdPath);
+          } catch {
+            // best effort cleanup
+          }
+        }
+        // 恢复被更新文件的原始内容
+        for (const [updatedPath, originalContent] of previousFileContents.entries()) {
+          try {
+            fs.writeFileSync(updatedPath, originalContent, "utf-8");
+          } catch {
+            // best effort restore
+          }
+        }
+
+        return {
+          scope: this.scope,
+          baseDir,
+          platforms: targetPlatforms,
+          success: false,
+          dryRun: false,
+          items,
+          manifestSaved: false,
+          errors: [
+            `Installation failed during file write: ${(err as Error).message}. All partially written files have been rolled back.`
+          ]
+        };
       }
-
-      const combinedPlatforms = Array.from(
-        new Set([...(existingManifest?.platforms || []), ...targetPlatforms])
-      );
-
-      const manifest: InstallationManifest = {
-        schemaVersion: "1.0.0",
-        packageVersion: "0.1.0",
-        scope: this.scope,
-        platforms: combinedPlatforms,
-        installedAt: existingManifest?.installedAt || now,
-        updatedAt: now,
-        files: Array.from(manifestFilesMap.values())
-      };
-
-      ManifestManager.save(baseDir, manifest);
-
-      return {
-        scope: this.scope,
-        baseDir,
-        platforms: combinedPlatforms,
-        success: true,
-        dryRun: false,
-        items,
-        manifestSaved: true,
-        errors: []
-      };
     });
   }
 }

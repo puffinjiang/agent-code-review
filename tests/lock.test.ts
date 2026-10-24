@@ -93,23 +93,71 @@ describe("ProcessLock Unit Tests", () => {
     }
   });
 
-  it("should not delete another holder's lock when an expired holder calls release() (D-14)", () => {
+  it("should never break lock if holder PID is alive, even if age exceeds staleMs (V-1)", () => {
     const lockPath = ProcessLock.getLockPath(tempDir);
-    // Process A acquires lock, then its lock becomes stale and is broken by Process B
+    // Process A (current live process) acquires lock
     const releaseA = ProcessLock.acquire(tempDir);
-    const oldTime = new Date(Date.now() - 20000);
-    fs.utimesSync(lockPath, oldTime, oldTime);
+    try {
+      // Backdate lock mtime by 60 seconds
+      const oldTime = new Date(Date.now() - 60000);
+      fs.utimesSync(lockPath, oldTime, oldTime);
 
-    const releaseB = ProcessLock.acquire(tempDir, { staleMs: 1000, timeoutMs: 500 });
-    const tokenB = JSON.parse(fs.readFileSync(lockPath, "utf-8")).token;
+      // Process B attempts to acquire with staleMs = 1000, timeoutMs = 200
+      // Since PID is alive, B must NOT steal A's active lock
+      expect(() =>
+        ProcessLock.acquire(tempDir, { staleMs: 1000, timeoutMs: 200, retryIntervalMs: 25 })
+      ).toThrow(/Failed to acquire lock/);
 
-    // Late releaseA must NOT delete Process B's active lock
-    releaseA();
+      // The original lock held by A must still be intact
+      expect(fs.existsSync(lockPath)).toBe(true);
+    } finally {
+      releaseA();
+    }
+  });
+
+  it("should not delete another holder's lock when an expired holder calls release() (V-2 TOCTOU)", () => {
+    const lockPath = ProcessLock.getLockPath(tempDir);
+    const tokenA = "stale-token-a";
+    // 1. Manually place an orphaned lock whose PID is dead (999999999) with tokenA
+    fs.writeFileSync(
+      lockPath,
+      JSON.stringify({ pid: 999999999, token: tokenA, time: Date.now() - 5000 }),
+      "utf-8"
+    );
+
+    // 2. Process B acquires the lock, breaking the dead lock and writing tokenB
+    const releaseB = ProcessLock.acquire(tempDir, { timeoutMs: 1000 });
+    const lockDataB = JSON.parse(fs.readFileSync(lockPath, "utf-8"));
+    const tokenB = lockDataB.token;
+    expect(tokenB).not.toBe(tokenA);
+
+    // 3. Stale holder A attempts to invoke release() with tokenA
+    // With V-2 atomic release, it must NOT delete Process B's active lock
+    // @ts-expect-error accessing private release for unit testing TOCTOU safety
+    ProcessLock.release(lockPath, tokenA);
+
     expect(fs.existsSync(lockPath)).toBe(true);
     expect(JSON.parse(fs.readFileSync(lockPath, "utf-8")).token).toBe(tokenB);
 
     releaseB();
     expect(fs.existsSync(lockPath)).toBe(false);
+  });
+
+  it("should refuse and never delete foreign non-ACR file placed at lockPath (V-6)", () => {
+    const lockPath = ProcessLock.getLockPath(tempDir);
+    const foreignContent = "user custom data or git tracked lock content";
+    fs.writeFileSync(lockPath, foreignContent, "utf-8");
+    // Backdate by 2 seconds so it's not considered mid-write
+    const oldTime = new Date(Date.now() - 2000);
+    fs.utimesSync(lockPath, oldTime, oldTime);
+
+    expect(() =>
+      ProcessLock.acquire(tempDir, { timeoutMs: 200, retryIntervalMs: 25 })
+    ).toThrow(/contains an invalid or foreign file\. Refusing to overwrite/);
+
+    // User's foreign file MUST NOT be deleted
+    expect(fs.existsSync(lockPath)).toBe(true);
+    expect(fs.readFileSync(lockPath, "utf-8")).toBe(foreignContent);
   });
 
   it.skipIf(!canSymlink)("should refuse live and dangling symlinks at lock path immediately and return structured error in Installer/Uninstaller (D-14)", () => {
