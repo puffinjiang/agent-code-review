@@ -27,6 +27,6 @@ export function getPackageVersion(): string {
     // fallback
   }
 
-  cachedVersion = "0.1.0";
+  cachedVersion = "unknown";
   return cachedVersion;
 }

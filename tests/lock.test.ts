@@ -234,6 +234,62 @@ describe("ProcessLock Unit Tests", () => {
     ).toThrow(/contains an invalid or foreign file\. Refusing to overwrite/);
     expect(fs.existsSync(lockPath)).toBe(true);
     expect(fs.readFileSync(lockPath, "utf-8")).toBe(foreignJson);
+
+    // 3. Foreign JSON file with non-positive pid (pid: 0)
+    const foreignPidZero = JSON.stringify({ pid: 0, token: "non-positive-pid", time: Date.now() - 2000, data: "KEEP" });
+    fs.writeFileSync(lockPath, foreignPidZero, "utf-8");
+    fs.utimesSync(lockPath, oldTime, oldTime);
+
+    expect(() =>
+      ProcessLock.acquire(tempDir, { timeoutMs: 200, retryIntervalMs: 25 })
+    ).toThrow(/contains an invalid or foreign file\. Refusing to overwrite/);
+    expect(fs.existsSync(lockPath)).toBe(true);
+    expect(fs.readFileSync(lockPath, "utf-8")).toBe(foreignPidZero);
+  });
+
+  it("should automatically recover 0-byte abandoned lock file older than 500ms (F-4)", () => {
+    const lockPath = ProcessLock.getLockPath(tempDir);
+    // Simulate an aborted/crashed process that created an empty lock file (0 bytes)
+    fs.writeFileSync(lockPath, "", "utf-8");
+    const oldTime = new Date(Date.now() - 2000);
+    fs.utimesSync(lockPath, oldTime, oldTime);
+    expect(fs.statSync(lockPath).size).toBe(0);
+
+    const release = ProcessLock.acquire(tempDir, { timeoutMs: 1000 });
+    expect(fs.existsSync(lockPath)).toBe(true);
+    expect(fs.statSync(lockPath).size).toBeGreaterThan(0);
+    release();
+    expect(fs.existsSync(lockPath)).toBe(false);
+  });
+
+  it("should never overwrite a third-party lock when restoring a mistakenly moved lock (F-2)", () => {
+    const lockPath = ProcessLock.getLockPath(tempDir);
+    const tokenC = "token-holder-c";
+    // 1. Process C acquires the lock at lockPath
+    fs.writeFileSync(
+      lockPath,
+      JSON.stringify({ pid: process.pid, token: tokenC, time: Date.now(), startEpoch: Date.now() }),
+      "utf-8"
+    );
+
+    // 2. Simulate trashPath containing an erroneously moved lock B
+    const trashPath = `${lockPath}.stale.test`;
+    fs.writeFileSync(
+      trashPath,
+      JSON.stringify({ pid: process.pid, token: "token-b", time: Date.now(), startEpoch: Date.now() }),
+      "utf-8"
+    );
+
+    // 3. Invoke restoreMovedLock: because lockPath is occupied by Process C, linkSync throws EEXIST
+    // and restoreMovedLock MUST NOT overwrite Process C's lock file
+    // @ts-expect-error private method test
+    ProcessLock.restoreMovedLock(trashPath, lockPath);
+
+    expect(fs.existsSync(lockPath)).toBe(true);
+    const currentLock = JSON.parse(fs.readFileSync(lockPath, "utf-8"));
+    expect(currentLock.token).toBe(tokenC); // Process C's lock is completely intact!
+    expect(fs.existsSync(trashPath)).toBe(true); // trashPath preserved
+    fs.unlinkSync(trashPath);
   });
 
   it.skipIf(!canSymlink)("should refuse live and dangling symlinks at lock path immediately and return structured error in Installer/Uninstaller (D-14)", () => {

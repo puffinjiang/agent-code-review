@@ -7,8 +7,6 @@ export const LOCK_FILENAME = ".agent-code-review.lock";
 
 export interface LockOptions {
   timeoutMs?: number;
-  /** @deprecated 已升级为内核进程身份 (PID, startEpoch) 精确校验，不再依赖时间猜测 */
-  staleMs?: number;
   retryIntervalMs?: number;
 }
 
@@ -63,7 +61,8 @@ export class ProcessLock {
       if (
         data &&
         typeof data === "object" &&
-        typeof data.pid === "number" &&
+        Number.isInteger(data.pid) &&
+        data.pid > 0 &&
         typeof data.token === "string" &&
         data.token.length > 0 &&
         typeof data.time === "number"
@@ -180,10 +179,38 @@ export class ProcessLock {
   }
 
   /**
-   * 原子地打破一个被判定为过期的锁。
-   * expectedToken 为判定时读到的 token。
+   * F-2 修复：以原子且 EEXIST 安全的方式恢复误移走的锁文件。
+   * 采用 linkSync 恢复，遇到原处已有第三方新锁占用时（抛出 EEXIST）绝不强行覆盖；
+   * 成功链接后再 unlinkSync 移除垃圾文件。
+   * 底层若不支持硬链接则降级在确认 lockPath 不存在时才 renameSync 还原。
    */
-  private static breakStale(lockPath: string, expectedToken: string): void {
+  private static restoreMovedLock(trashPath: string, lockPath: string): void {
+    try {
+      fs.linkSync(trashPath, lockPath);
+      try { fs.unlinkSync(trashPath); } catch { /* ignore */ }
+    } catch (err: unknown) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "EEXIST") {
+        // 原处已有第三方新锁占用，保留 trashPath 绝不覆盖他人锁
+        return;
+      }
+      if (code === "EPERM" || code === "ENOTSUP" || code === "EOPNOTSUPP" || code === "ENOSYS") {
+        try {
+          if (!fs.existsSync(lockPath)) {
+            fs.renameSync(trashPath, lockPath);
+          }
+        } catch {
+          return;
+        }
+      }
+    }
+  }
+
+  /**
+   * 原子地打破一个被判定为过期的锁。
+   * expectedToken 为判定时读到的 token（对于 0 字节崩溃残留锁可传 null）。
+   */
+  private static breakStale(lockPath: string, expectedToken: string | null): void {
     const trashPath = this.uniqueSibling(lockPath, "stale");
     try {
       fs.renameSync(lockPath, trashPath);
@@ -195,13 +222,9 @@ export class ProcessLock {
     const moved = this.readLock(trashPath);
     const movedToken = moved?.token ?? null;
     if (movedToken !== expectedToken) {
-      // 判定与 rename 之间锁已被他人替换：我们误移了一个新的活锁，尽力恢复
-      try {
-        fs.renameSync(trashPath, lockPath);
-      } catch {
-        // V-3 修复：原处已有新锁占用，保留 trashPath 绝不强行 unlink 他人的有效锁
-        return;
-      }
+      // 判定与 rename 之间锁已被他人替换：我们误移了一个新的有效锁，尽力恢复且不覆盖新锁
+      this.restoreMovedLock(trashPath, lockPath);
+      return;
     }
     try { fs.unlinkSync(trashPath); } catch { /* ignore */ }
   }
@@ -285,11 +308,17 @@ export class ProcessLock {
             );
           }
         } else {
-          // V-6 修复：非 ACR 锁结构的文件（外来文件或用户自定义文件），绝不能判定为 stale 并无条件删除
-          // 若文件刚被创建（age <= 500ms），可能处于原子写入的极短过渡期，给予重试机会；
-          // 超过 500ms 仍无法解析为有效 ACR 锁，判定为外来文件冲突，立即拒绝并报错保护用户数据。
+          // 无法解析为有效 ACR 锁：可能是 0 字节崩溃残留，也可能是外来文件
           const age = Date.now() - stat.mtimeMs;
-          if (age > 500) {
+          if (stat.size === 0) {
+            // F-4 修复：0 字节空文件不含任何用户数据。若已持续超过 500ms，
+            // 确认为前序进程在创建阶段崩溃夭折的遗留锁，自动安全回收自愈。
+            if (age > 500) {
+              this.breakStale(lockPath, null);
+              continue;
+            }
+          } else if (age > 500) {
+            // 非 0 字节外来文件冲突，立即拒绝并报错保护用户数据
             throw new Error(`Lock path '${lockPath}' contains an invalid or foreign file. Refusing to overwrite.`);
           }
         }
@@ -337,12 +366,8 @@ export class ProcessLock {
       if (moved && moved.token === token) {
         try { fs.unlinkSync(trashPath); } catch { /* ignore */ }
       } else {
-        // 极短窗口内移走的是他人的新锁：原子移回恢复
-        try {
-          fs.renameSync(trashPath, lockPath);
-        } catch {
-          // V-3 修复：恢复失败（原处已有新锁），保留 trashPath 绝不强行删除他人有效锁
-        }
+        // 极短窗口内移走的是他人的新锁：以 EEXIST 安全方式还原，绝不覆盖他人新锁
+        this.restoreMovedLock(trashPath, lockPath);
       }
     } catch {
       // 保护性捕获：绝不误删未核验 token 的文件
