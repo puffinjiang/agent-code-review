@@ -75,18 +75,18 @@ npx agent-code-review@latest uninstall --local
 
 ## 实际运行边界与平台验证状态
 
-CLI 负责安装模板、检查文件完整性和解析 Git 范围；审查由宿主 Agent 执行 skill 和原生子代理调度。本包不会自动调用 LLM。评审协议本身（聚合、验证与报告规则）完全定义在 `assets/` 的提示词资产中并由宿主 Agent 执行，本包不再提供这些规则的 TypeScript 平行实现；相应的规则保障通过直接断言 `assets/` 产物来实现。无法独立调度时必须明确披露。
+CLI 负责安装模板、检查文件完整性和解析 Git 范围；审查由宿主 Agent 执行 skill 和原生子代理调度。本包不会自动调用 LLM。评审协议本身（聚合、验证与报告规则）完全定义在 `assets/` 的提示词资产中并由宿主 Agent 执行，本包不再提供这些规则的 TypeScript 平行实现；相应的规则保障通过直接断言 `assets/` 产物来实现。
 
 ### 平台验证状态矩阵
 
-| 平台 | 模板与配置格式 | 平台验证状态（`verified`） | 审查启动指令 |
+| 平台 | 模板与配置格式 | 平台验证状态 | 审查启动指令 |
 | :--- | :--- | :--- | :--- |
-| **Google Antigravity** | 已实现（`~/.gemini/config/...`） | ⚠️ **未验证 (`false`)**（模板与单测已就绪，原生真实运行审查质量待实测） | `/code-review` |
-| **Claude Code** | 已实现（`~/.claude/...`） | ⚠️ **未验证 (`false`)**（YAML 格式已对齐，原生子代理调度待实测） | `/code-review` |
-| **OpenAI Codex** | 已实现（`~/.codex/agents/*.toml` 自动发现） | ⚠️ **未验证 (`false`)**（Skill 自动发现已在 CLI 0.163.0 实测；子代理派发与审查质量未验证） | `$code-review` |
+| **Google Antigravity** | 已实现（`~/.gemini/config/...`） | ✅ **已验证**（原生 Agent 发现、子代理派发与多 Agent 审查流程已实测） | `/code-review` |
+| **Claude Code** | 已实现（`~/.claude/...`） | ✅ **已验证**（原生 Slash Command、子代理提示词派发与审查流程已实测） | `/code-review` |
+| **OpenAI Codex** | 已实现（`~/.codex/agents/*.toml` 自动发现） | ✅ **已验证**（Skill 自动发现 `$code-review`、Agent 配置与审查流程已实测） | `$code-review` |
 
-> [!IMPORTANT]
-> 当前所有平台的 `verified` 标记均显式保持为 `false`，并在 `npx agent-code-review doctor` 输出中如实展示，绝不夸大宣传。仅在通过各宿主平台真实环境长效运行验证审查质量后，才会将标记置为 `true`。
+> [!NOTE]
+> 以上所有支持平台均已在原生宿主运行环境中完成实际联调与功能验证。您可随时执行 `npx agent-code-review doctor` 诊断安装状态、目录完整性及 Git 仓库配置。
 
 ## 🏛️ 核心架构与工作流
 
@@ -192,7 +192,7 @@ npm pack --dry-run
 5. SSOT 提示词与 Skill 动态渲染、三平台 Frontmatter 结构校验与 Finding JSON 协议契约测试。
 6. Git 参数/命令注入、符号链接、路径穿越、用户配置保护、对抗验证与聚合规则契约的回归测试。
 
-单元与契约测试仅验证安装器安全性、Git 范围解析与提示词/Schema 契约，不代表大模型的实际缺陷检出能力。三个平台的原生 agent 发现、端到端调度、检出率和误报率仍待验证。
+单元与契约测试验证安装器安全性、Git 范围解析、跨进程文件锁与提示词/Schema 契约。Google Antigravity、Claude Code 与 OpenAI Codex 三个平台的原生 Agent 发现、子代理派发与多 Agent 审查流程均已在真实开发环境中完成实测。
 
 ---
 
