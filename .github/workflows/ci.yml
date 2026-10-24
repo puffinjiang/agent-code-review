@@ -29,10 +29,17 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
-          cache: 'npm'
+          cache: "npm"
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Code format & lint check (Biome)
+        run: npx @biomejs/biome ci
+
+      - name: Dependency security audit
+        if: matrix.os == 'ubuntu-latest' && matrix.node-version == '22.x'
+        run: npm audit --audit-level=high
 
       - name: Type check
         run: npm run typecheck

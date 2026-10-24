@@ -56,13 +56,14 @@ npx agent-code-review@latest uninstall --local
 
 ### Installation Target Paths
 
-| Platform | Global Scope (`--global`, Default) | Local Scope (`--local`) |
-| :--- | :--- | :--- |
+| Platform               | Global Scope (`--global`, Default)                                                              | Local Scope (`--local`)                                                       |
+| :--------------------- | :---------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------- |
 | **Google Antigravity** | `~/.gemini/config/skills/code-review/SKILL.md`<br>`~/.gemini/config/agents/<reviewer>/agent.md` | `.agents/skills/code-review/SKILL.md`<br>`.agents/agents/<reviewer>/agent.md` |
-| **Claude Code** | `~/.claude/skills/code-review/SKILL.md`<br>`~/.claude/agents/<reviewer>.md` | `.claude/skills/code-review/SKILL.md`<br>`.claude/agents/<reviewer>.md` |
-| **OpenAI Codex** | `~/.agents/skills/code-review/SKILL.md`<br>`~/.codex/agents/<reviewer>.toml` | `.agents/skills/code-review/SKILL.md`<br>`.codex/agents/<reviewer>.toml` |
+| **Claude Code**        | `~/.claude/skills/code-review/SKILL.md`<br>`~/.claude/agents/<reviewer>.md`                     | `.claude/skills/code-review/SKILL.md`<br>`.claude/agents/<reviewer>.md`       |
+| **OpenAI Codex**       | `~/.agents/skills/code-review/SKILL.md`<br>`~/.codex/agents/<reviewer>.toml`                    | `.agents/skills/code-review/SKILL.md`<br>`.codex/agents/<reviewer>.toml`      |
 
 ### Safety Guarantees
+
 - **No Elevated Privileges**: Uses standard user permissions (`os.homedir()`), never requires `sudo`.
 - **Manifest Tracking**: Maintains `.agent-code-review.json` recording paths, platforms, and SHA-256 hashes.
 - **Never Writes Existing User Config**: Installation only creates directories and files it owns. It never adds to, rewrites, or deletes an existing configuration file — not even with `--force`. Codex discovers reviewer agents from `~/.codex/agents/*.toml` automatically, so no entry in `config.toml` is required. Uninstall removes only what was installed; if an older version ever appended a block to your Codex config, uninstall prints manual removal instructions instead of editing the file.
@@ -77,11 +78,11 @@ The CLI installs templates, diagnoses file integrity, and resolves Git scopes. T
 
 ### Platform Verification Matrix
 
-| Platform | Format & Templates | Verification Status | Command Trigger |
-| :--- | :--- | :--- | :--- |
-| **Google Antigravity** | Implemented (`~/.gemini/config/...`) | ✅ **Verified** (Native agent discovery, subagent delegation, and review workflow validated) | `/code-review` |
-| **Claude Code** | Implemented (`~/.claude/...`) | ✅ **Verified** (Native slash command, subagent prompt delegation, and review workflow validated) | `/code-review` |
-| **OpenAI Codex** | Implemented (`~/.codex/agents/*.toml` auto-discovery) | ✅ **Verified** (Skill auto-discovery `$code-review`, agent configuration, and review workflow validated) | `$code-review` |
+| Platform               | Format & Templates                                    | Verification Status                                                                                       | Command Trigger |
+| :--------------------- | :---------------------------------------------------- | :-------------------------------------------------------------------------------------------------------- | :-------------- |
+| **Google Antigravity** | Implemented (`~/.gemini/config/...`)                  | ✅ **Verified** (Native agent discovery, subagent delegation, and review workflow validated)              | `/code-review`  |
+| **Claude Code**        | Implemented (`~/.claude/...`)                         | ✅ **Verified** (Native slash command, subagent prompt delegation, and review workflow validated)         | `/code-review`  |
+| **OpenAI Codex**       | Implemented (`~/.codex/agents/*.toml` auto-discovery) | ✅ **Verified** (Skill auto-discovery `$code-review`, agent configuration, and review workflow validated) | `$code-review`  |
 
 > [!NOTE]
 > All supported platforms have been tested and verified in native runtime environments. You can run `npx agent-code-review doctor` at any time to inspect your installed platform configurations, directory integrity, and Git repository status.
@@ -160,7 +161,7 @@ Once installed globally, trigger a multi-agent review inside **any** project dir
 - **P2**: Normal functional bug or correctness issue impacting production reliability.
 - **P3**: Minor operable defect or localized inefficiency.
 
-*Cosmetic linting, formatting, and naming preferences are strictly filtered out and never reported as bugs.*
+_Cosmetic linting, formatting, and naming preferences are strictly filtered out and never reported as bugs._
 
 ---
 

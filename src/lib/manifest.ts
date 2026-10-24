@@ -1,5 +1,5 @@
-import * as fs from "node:fs";
 import * as crypto from "node:crypto";
+import * as fs from "node:fs";
 
 import { resolveManagedPath } from "./managed-path.js";
 
@@ -53,15 +53,27 @@ export class ManifestManager {
           if (entry && typeof entry === "object") entry.platform ??= manifest.platform;
         }
       }
-      if (!manifest || manifest.schemaVersion !== "1.0.0" ||
-          !["global", "local"].includes(manifest.scope) ||
-          !Array.isArray(manifest.platforms) || !manifest.platforms.every((p) => typeof p === "string") ||
-          !Array.isArray(manifest.files) || !manifest.files.every((entry) =>
-            entry && typeof entry.path === "string" && typeof entry.hash === "string" &&
-            /^[a-f0-9]{64}$/.test(entry.hash) && typeof entry.platform === "string" &&
+      if (
+        !manifest ||
+        manifest.schemaVersion !== "1.0.0" ||
+        !["global", "local"].includes(manifest.scope) ||
+        !Array.isArray(manifest.platforms) ||
+        !manifest.platforms.every((p) => typeof p === "string") ||
+        !Array.isArray(manifest.files) ||
+        !manifest.files.every(
+          (entry) =>
+            entry &&
+            typeof entry.path === "string" &&
+            typeof entry.hash === "string" &&
+            /^[a-f0-9]{64}$/.test(entry.hash) &&
+            typeof entry.platform === "string" &&
             (entry.sharedConfig === undefined || typeof entry.sharedConfig === "boolean") &&
-            (entry.originalContent === undefined || entry.originalContent === null || typeof entry.originalContent === "string")
-          )) return null;
+            (entry.originalContent === undefined ||
+              entry.originalContent === null ||
+              typeof entry.originalContent === "string"),
+        )
+      )
+        return null;
       return manifest;
     } catch {
       return null;
@@ -87,7 +99,11 @@ export class ManifestManager {
       // Atomically replace the target manifest
       fs.renameSync(tmpPath, manifestPath);
     } catch (err) {
-      try { fs.unlinkSync(tmpPath); } catch { /* already renamed or gone */ }
+      try {
+        fs.unlinkSync(tmpPath);
+      } catch {
+        /* already renamed or gone */
+      }
       throw err;
     }
   }

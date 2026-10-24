@@ -9,10 +9,7 @@ export type FindingCategory =
   | "performance"
   | "architecture";
 
-export type FindingOrigin =
-  | "introduced"
-  | "pre-existing-exposed"
-  | "pre-existing-unrelated";
+export type FindingOrigin = "introduced" | "pre-existing-exposed" | "pre-existing-unrelated";
 
 export interface VerificationEvidence {
   method: "static-analysis" | "trace" | "test-execution" | "adversarial-proof";
@@ -87,24 +84,34 @@ export function validateFinding(finding: unknown): { valid: boolean; errors: str
     "security",
     "concurrency",
     "performance",
-    "architecture"
+    "architecture",
   ];
   if (!f.category || !validCategories.includes(f.category)) {
     errors.push(`category must be one of: ${validCategories.join(", ")}`);
   }
 
   if (!f.file || typeof f.file !== "string") errors.push("file must be a string");
-  if (!Number.isInteger(f.start_line) || (f.start_line ?? 0) < 1) errors.push("start_line must be a positive integer");
+  if (!Number.isInteger(f.start_line) || (f.start_line ?? 0) < 1)
+    errors.push("start_line must be a positive integer");
   if (!Number.isInteger(f.end_line) || (f.end_line ?? 0) < (f.start_line ?? 1)) {
     errors.push("end_line must be a number greater than or equal to start_line");
   }
 
   if (!f.trigger || typeof f.trigger !== "string") errors.push("trigger must be a string");
   if (!f.impact || typeof f.impact !== "string") errors.push("impact must be a string");
-  if (!Array.isArray(f.evidence) || !f.evidence.every((e) => typeof e === "string" && e.trim().length > 0)) errors.push("evidence must be an array of strings");
-  if (!f.recommendation || typeof f.recommendation !== "string") errors.push("recommendation must be a string");
+  if (
+    !Array.isArray(f.evidence) ||
+    !f.evidence.every((e) => typeof e === "string" && e.trim().length > 0)
+  )
+    errors.push("evidence must be an array of strings");
+  if (!f.recommendation || typeof f.recommendation !== "string")
+    errors.push("recommendation must be a string");
 
-  const validOrigins: FindingOrigin[] = ["introduced", "pre-existing-exposed", "pre-existing-unrelated"];
+  const validOrigins: FindingOrigin[] = [
+    "introduced",
+    "pre-existing-exposed",
+    "pre-existing-unrelated",
+  ];
   if (!f.origin || !validOrigins.includes(f.origin)) {
     errors.push(`origin must be one of: ${validOrigins.join(", ")}`);
   }
@@ -112,7 +119,11 @@ export function validateFinding(finding: unknown): { valid: boolean; errors: str
   if (!f.verification || typeof f.verification !== "object") {
     errors.push("verification must be an object");
   } else {
-    if (!["static-analysis", "trace", "test-execution", "adversarial-proof"].includes(f.verification.method)) {
+    if (
+      !["static-analysis", "trace", "test-execution", "adversarial-proof"].includes(
+        f.verification.method,
+      )
+    ) {
       errors.push("verification.method must be a supported verification method");
     }
     if (typeof f.verification.tests_executed !== "boolean") {
@@ -121,12 +132,16 @@ export function validateFinding(finding: unknown): { valid: boolean; errors: str
     if (f.verification.notes !== undefined && typeof f.verification.notes !== "string") {
       errors.push("verification.notes must be a string when provided");
     }
-    if (f.verification.counter_evidence !== undefined && typeof f.verification.counter_evidence !== "string") {
+    if (
+      f.verification.counter_evidence !== undefined &&
+      typeof f.verification.counter_evidence !== "string"
+    ) {
       errors.push("verification.counter_evidence must be a string when provided");
     }
     if (
       f.status === "REJECTED" &&
-      (typeof f.verification.counter_evidence !== "string" || f.verification.counter_evidence.trim().length === 0)
+      (typeof f.verification.counter_evidence !== "string" ||
+        f.verification.counter_evidence.trim().length === 0)
     ) {
       errors.push("verification.counter_evidence is required when status is REJECTED");
     }
@@ -134,6 +149,6 @@ export function validateFinding(finding: unknown): { valid: boolean; errors: str
 
   return {
     valid: errors.length === 0,
-    errors
+    errors,
   };
 }

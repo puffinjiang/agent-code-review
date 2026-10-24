@@ -52,7 +52,11 @@ for (const platform of platforms) {
     }
 
     // 检查是否包含 5 个 reviewer + 1 个 skill
-    const agents = files.filter((f) => f.relativePath.endsWith(".toml") || (f.relativePath.includes("agents/") && !f.relativePath.includes("skills/")));
+    const agents = files.filter(
+      (f) =>
+        f.relativePath.endsWith(".toml") ||
+        (f.relativePath.includes("agents/") && !f.relativePath.includes("skills/")),
+    );
     const skill = files.find((f) => f.relativePath.endsWith("skills/code-review/SKILL.md"));
 
     if (agents.length < 5) {

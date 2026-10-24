@@ -22,7 +22,7 @@ const managedPaths = [
   new RegExp(`^\\.claude/agents/(?:${reviewers})\\.md(?:\\.tmp\\.[^/]+)?$`),
   new RegExp(`^\\.codex/agents/(?:${reviewers})\\.toml(?:\\.tmp\\.[^/]+)?$`),
   new RegExp(`^\\.(?:agents|gemini/config)/agents/(?:${reviewers})/agent\\.md(?:\\.tmp\\.[^/]+)?$`),
-  new RegExp(`^\\.codex\\/config\\.toml$`)
+  /^\.codex\/config\.toml$/,
 ];
 
 /**
@@ -44,8 +44,13 @@ const cleanableDirs = new Set([
   ".gemini/config/skills/code-review",
   ".gemini/antigravity-cli/skills/code-review",
   // Antigravity 的 agent 布局为 <role>/agent.md（local 为 .agents/agents/<role>，global 为 .gemini/config/agents/<role>）
-  ...["correctness-reviewer", "security-reviewer", "concurrency-reviewer", "performance-reviewer", "findings-verifier"]
-    .flatMap((role) => [`.agents/agents/${role}`, `.gemini/config/agents/${role}`])
+  ...[
+    "correctness-reviewer",
+    "security-reviewer",
+    "concurrency-reviewer",
+    "performance-reviewer",
+    "findings-verifier",
+  ].flatMap((role) => [`.agents/agents/${role}`, `.gemini/config/agents/${role}`]),
 ]);
 
 /** 该相对目录是否允许在卸载时被清理。始终按 POSIX 风格比较。 */

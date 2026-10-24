@@ -1,16 +1,20 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { GitScopeResolver } from "../core/git/scope.js";
-import * as fs from "node:fs";
-import * as path from "node:path";
-import * as os from "node:os";
 import { execFileSync } from "node:child_process";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { GitScopeResolver } from "../core/git/scope.js";
 
 describe("Git Scope Resolver", () => {
   let tempDir: string;
   // 以独立参数调用 git：Windows cmd.exe 不把单引号当作引号字符，
   // 拼接成命令字符串会传错参数（见 docs/audit-and-remediation.md D-07）。
   const git = (...args: string[]) =>
-    execFileSync("git", args, { cwd: tempDir, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+    execFileSync("git", args, {
+      cwd: tempDir,
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
 
   beforeEach(() => {
     tempDir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "acr-git-test-")));
@@ -162,9 +166,9 @@ describe("Git Scope Resolver", () => {
     expect(result.changedFiles).toContain("untracked-in-root.txt");
 
     // Verify patch contains repository-relative paths
-    expect(result.patch).toContain('b/sub-a/tracked-in-a.txt');
-    expect(result.patch).toContain('b/sub-b/untracked-in-b.txt');
-    expect(result.patch).toContain('b/untracked-in-root.txt');
+    expect(result.patch).toContain("b/sub-a/tracked-in-a.txt");
+    expect(result.patch).toContain("b/sub-b/untracked-in-b.txt");
+    expect(result.patch).toContain("b/untracked-in-root.txt");
   });
 
   it("should cap untracked file patch size and omit massive file contents (V-8)", () => {
@@ -175,7 +179,7 @@ describe("Git Scope Resolver", () => {
 
     const result = resolver.resolve({
       target: "uncommitted",
-      maxUntrackedFileSize: 1 * 1024 * 1024 // 1 MB cap
+      maxUntrackedFileSize: 1 * 1024 * 1024, // 1 MB cap
     });
 
     expect(result.untrackedFiles).toContain("large-untracked.txt");
@@ -194,7 +198,7 @@ describe("Git Scope Resolver", () => {
 
     const result = resolver.resolve({
       target: "uncommitted",
-      maxTotalUntrackedSize: 600 * 1024 // 600 KB total cap
+      maxTotalUntrackedSize: 600 * 1024, // 600 KB total cap
     });
 
     expect(result.untrackedFiles).toHaveLength(3);
@@ -207,7 +211,7 @@ describe("Git Scope Resolver", () => {
     // Test with a tiny maxBuffer in runGit to verify ENOBUFS diagnostic messaging
     // @ts-expect-error test private method error handling
     expect(() => resolver.runGit(["status"], false, 10)).toThrow(
-      /Git command output exceeded buffer limit.*Consider scoping review/
+      /Git command output exceeded buffer limit.*Consider scoping review/,
     );
   });
 });

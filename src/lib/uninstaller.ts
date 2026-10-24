@@ -1,11 +1,10 @@
 import * as fs from "node:fs";
-import * as path from "node:path";
 import * as os from "node:os";
-import { ManifestManager } from "./manifest.js";
-import { InstallScope } from "./installer.js";
+import * as path from "node:path";
+import type { InstallScope } from "./installer.js";
 import { ProcessLock } from "./lock.js";
-
-import { resolveManagedPath, isCleanableDir, LEGACY_SHARED_CONFIG } from "./managed-path.js";
+import { isCleanableDir, LEGACY_SHARED_CONFIG, resolveManagedPath } from "./managed-path.js";
+import { ManifestManager } from "./manifest.js";
 
 export interface UninstallOptions {
   workspaceRoot?: string;
@@ -97,7 +96,7 @@ export class Uninstaller {
         skippedFiles: [],
         manualCleanup: [],
         manifestRemoved: false,
-        errors: [(error as Error).message]
+        errors: [(error as Error).message],
       };
     }
   }
@@ -115,7 +114,9 @@ export class Uninstaller {
         skippedFiles: [],
         manualCleanup: [],
         manifestRemoved: false,
-        errors: [`No ${this.scope} .agent-code-review.json manifest found in ${baseDir}. Nothing to uninstall.`]
+        errors: [
+          `No ${this.scope} .agent-code-review.json manifest found in ${baseDir}. Nothing to uninstall.`,
+        ],
       };
     }
 
@@ -126,7 +127,8 @@ export class Uninstaller {
 
     for (const entry of manifest.files) {
       try {
-        if (entry.path === ".agent-code-review.json") throw new Error("The manifest is not a managed content file.");
+        if (entry.path === ".agent-code-review.json")
+          throw new Error("The manifest is not a managed content file.");
         const fullPath = resolveManagedPath(baseDir, entry.path);
         if (!fs.existsSync(fullPath)) continue;
         const content = fs.readFileSync(fullPath, "utf-8");
@@ -138,7 +140,9 @@ export class Uninstaller {
           manualCleanup.push(entry.path);
         } else {
           if (modified && !this.force) {
-            throw new Error("File was modified after installation; preserving user edits (use --force to remove).");
+            throw new Error(
+              "File was modified after installation; preserving user edits (use --force to remove).",
+            );
           }
           if (!this.dryRun) {
             resolveManagedPath(baseDir, entry.path);
@@ -149,7 +153,9 @@ export class Uninstaller {
               const baseName = path.basename(fullPath);
               for (const file of fs.readdirSync(parentDir)) {
                 if (file.startsWith(`${baseName}.tmp.`)) {
-                  try { fs.unlinkSync(path.join(parentDir, file)); } catch {}
+                  try {
+                    fs.unlinkSync(path.join(parentDir, file));
+                  } catch {}
                 }
               }
             } catch {}
@@ -168,8 +174,15 @@ export class Uninstaller {
       manifestRemoved = this.dryRun ? true : ManifestManager.remove(baseDir);
     }
     return {
-      scope: this.scope, baseDir, success: errors.length === 0, dryRun: this.dryRun,
-      removedFiles, skippedFiles, manualCleanup, manifestRemoved, errors
+      scope: this.scope,
+      baseDir,
+      success: errors.length === 0,
+      dryRun: this.dryRun,
+      removedFiles,
+      skippedFiles,
+      manualCleanup,
+      manifestRemoved,
+      errors,
     };
   }
 }

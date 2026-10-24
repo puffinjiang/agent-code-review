@@ -1,11 +1,11 @@
 import * as fs from "node:fs";
-import * as path from "node:path";
 import * as os from "node:os";
-import { ManifestManager, InstallationManifest } from "./manifest.js";
+import * as path from "node:path";
+import { PLATFORMS, type PlatformMetadata } from "../../adapters/index.js";
 import { GitScopeResolver } from "../../core/git/scope.js";
-import { detectPlatforms, DetectedPlatform } from "./detect-platform.js";
+import { type DetectedPlatform, detectPlatforms } from "./detect-platform.js";
 import { resolveManagedPath } from "./managed-path.js";
-import { PLATFORMS, PlatformMetadata } from "../../adapters/index.js";
+import { type InstallationManifest, ManifestManager } from "./manifest.js";
 
 export interface DoctorCheckResult {
   name: string;
@@ -25,10 +25,7 @@ export interface DoctorReport {
 }
 
 export class Doctor {
-  public static diagnose(options: {
-    workspaceRoot?: string;
-    homeDir?: string;
-  } = {}): DoctorReport {
+  public static diagnose(options: { workspaceRoot?: string; homeDir?: string } = {}): DoctorReport {
     const workspaceRoot = path.resolve(options.workspaceRoot || process.cwd());
     const homeDir = path.resolve(options.homeDir || os.homedir());
     const checks: DoctorCheckResult[] = [];
@@ -41,13 +38,13 @@ export class Doctor {
       checks.push({
         name: "Detected Platforms",
         status: "pass",
-        message: `Active platforms detected on machine: ${installedNames.join(", ")}.`
+        message: `Active platforms detected on machine: ${installedNames.join(", ")}.`,
       });
     } else {
       checks.push({
         name: "Detected Platforms",
         status: "warn",
-        message: "No standard AI Coding Agent CLI binaries found in system PATH."
+        message: "No standard AI Coding Agent CLI binaries found in system PATH.",
       });
     }
 
@@ -55,14 +52,18 @@ export class Doctor {
     const platformEntries = Object.values(PLATFORMS);
     const unverifiedEntries = platformEntries.filter((p) => !p.verified);
     const verificationDetails = platformEntries
-      .map((p) => `\n   - ${p.name}: ${p.verified ? "verified" : "unverified"}${p.notes ? ` (${p.notes})` : ""}`)
+      .map(
+        (p) =>
+          `\n   - ${p.name}: ${p.verified ? "verified" : "unverified"}${p.notes ? ` (${p.notes})` : ""}`,
+      )
       .join("");
     checks.push({
       name: "Platform Verification Status",
       status: unverifiedEntries.length > 0 ? "warn" : "pass",
-      message: (unverifiedEntries.length === platformEntries.length
-        ? "All platforms are currently unverified in native runtime (review quality not validated):"
-        : "Platform verification:") + verificationDetails
+      message:
+        (unverifiedEntries.length === platformEntries.length
+          ? "All platforms are currently unverified in native runtime (review quality not validated):"
+          : "Platform verification:") + verificationDetails,
     });
 
     // Check 3: Global Installation Manifest
@@ -75,7 +76,7 @@ export class Doctor {
       checks.push({
         name: "Global Installation",
         status: "pass",
-        message: `Global configuration active for [${globalPlatforms}] (version ${globalManifest.packageVersion}).`
+        message: `Global configuration active for [${globalPlatforms}] (version ${globalManifest.packageVersion}).`,
       });
 
       // Verify global files (V-10 修复：对目录、损坏符号链接及权限异常做安全防护，防止 EISDIR 崩溃)
@@ -83,8 +84,12 @@ export class Doctor {
       let modified = 0;
       for (const entry of globalManifest.files) {
         let full: string;
-        try { full = resolveManagedPath(homeDir, entry.path); }
-        catch { missing++; continue; }
+        try {
+          full = resolveManagedPath(homeDir, entry.path);
+        } catch {
+          missing++;
+          continue;
+        }
         try {
           const stat = fs.lstatSync(full);
           if (!stat.isFile()) {
@@ -112,26 +117,27 @@ export class Doctor {
         checks.push({
           name: "Global Files Integrity",
           status: "fail",
-          message: `${missing} global managed file(s) are missing on disk.`
+          message: `${missing} global managed file(s) are missing on disk.`,
         });
       } else if (modified > 0) {
         checks.push({
           name: "Global Files Integrity",
           status: "warn",
-          message: `${modified} global managed file(s) have local user customizations or non-file entries.`
+          message: `${modified} global managed file(s) have local user customizations or non-file entries.`,
         });
       } else {
         checks.push({
           name: "Global Files Integrity",
           status: "pass",
-          message: `All ${globalManifest.files.length} global files match installation hashes.`
+          message: `All ${globalManifest.files.length} global files match installation hashes.`,
         });
       }
     } else {
       checks.push({
         name: "Global Installation",
         status: "warn",
-        message: "No global configuration found at ~/.agent-code-review.json. Run 'npx agent-code-review init' to install globally."
+        message:
+          "No global configuration found at ~/.agent-code-review.json. Run 'npx agent-code-review init' to install globally.",
       });
     }
 
@@ -148,7 +154,7 @@ export class Doctor {
       checks.push({
         name: "Local Project Installation",
         status: "pass",
-        message: `Project-level configuration present in workspace for [${localPlatforms}].`
+        message: `Project-level configuration present in workspace for [${localPlatforms}].`,
       });
 
       // Verify local files integrity (V-10 防护)
@@ -156,8 +162,12 @@ export class Doctor {
       let localModified = 0;
       for (const entry of localManifest.files) {
         let full: string;
-        try { full = resolveManagedPath(workspaceRoot, entry.path); }
-        catch { localMissing++; continue; }
+        try {
+          full = resolveManagedPath(workspaceRoot, entry.path);
+        } catch {
+          localMissing++;
+          continue;
+        }
         try {
           const stat = fs.lstatSync(full);
           if (!stat.isFile()) {
@@ -183,19 +193,19 @@ export class Doctor {
         checks.push({
           name: "Local Files Integrity",
           status: "fail",
-          message: `${localMissing} local managed file(s) are missing on disk.`
+          message: `${localMissing} local managed file(s) are missing on disk.`,
         });
       } else if (localModified > 0) {
         checks.push({
           name: "Local Files Integrity",
           status: "warn",
-          message: `${localModified} local managed file(s) have local user customizations or non-file entries.`
+          message: `${localModified} local managed file(s) have local user customizations or non-file entries.`,
         });
       } else {
         checks.push({
           name: "Local Files Integrity",
           status: "pass",
-          message: `All ${localManifest.files.length} local files match installation hashes.`
+          message: `All ${localManifest.files.length} local files match installation hashes.`,
         });
       }
 
@@ -203,7 +213,8 @@ export class Doctor {
         checks.push({
           name: "Configuration Precedence",
           status: "warn",
-          message: "Local workspace configuration is present and will override global Agent Review settings for this project."
+          message:
+            "Local workspace configuration is present and will override global Agent Review settings for this project.",
         });
       }
     }
@@ -212,7 +223,7 @@ export class Doctor {
       checks.push({
         name: "Git Repository",
         status: "pass",
-        message: "Valid Git repository detected in current workspace."
+        message: "Valid Git repository detected in current workspace.",
       });
     }
 
@@ -224,7 +235,7 @@ export class Doctor {
       platformVerification: PLATFORMS,
       globalManifest,
       localManifest,
-      checks
+      checks,
     };
   }
 }

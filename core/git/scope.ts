@@ -34,20 +34,24 @@ export class GitScopeResolver {
     this.cwd = cwd;
   }
 
-  private runGit(args: string[], runInRepoRoot: boolean = false, maxBuffer = DEFAULT_GIT_MAX_BUFFER): string {
+  private runGit(
+    args: string[],
+    runInRepoRoot: boolean = false,
+    maxBuffer = DEFAULT_GIT_MAX_BUFFER,
+  ): string {
     const execCwd = runInRepoRoot && this.repoRoot ? this.repoRoot : this.cwd;
     try {
       return execFileSync("git", args, {
         cwd: execCwd,
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "pipe"],
-        maxBuffer
+        maxBuffer,
       });
     } catch (err: unknown) {
       const e = err as { code?: string; stderr?: string; message: string };
       if (e.code === "ENOBUFS") {
         throw new Error(
-          `Git command output exceeded buffer limit (${(maxBuffer / (1024 * 1024)).toFixed(0)} MB) [git ${args.join(" ")}]: Consider scoping review with revision ranges or specific paths.`
+          `Git command output exceeded buffer limit (${(maxBuffer / (1024 * 1024)).toFixed(0)} MB) [git ${args.join(" ")}]: Consider scoping review with revision ranges or specific paths.`,
         );
       }
       throw new Error(`Git command failed [git ${args.join(" ")}]: ${e.stderr || e.message}`);
@@ -101,7 +105,10 @@ export class GitScopeResolver {
 
     // Detect untracked files across entire repository relative to repoRoot
     if (includeUntracked && (target === "uncommitted" || target === "working-tree")) {
-      const untrackedOutput = this.runGit(["ls-files", "--others", "--exclude-standard", "-z"], true);
+      const untrackedOutput = this.runGit(
+        ["ls-files", "--others", "--exclude-standard", "-z"],
+        true,
+      );
       untrackedFiles = untrackedOutput.split("\0").filter(Boolean);
     }
 
@@ -124,10 +131,14 @@ export class GitScopeResolver {
       } else {
         // Against an empty initial tree, review the current worktree contents of
         // indexed files too, including edits made after staging.
-        const indexed = this.runGit(["ls-files", "--cached", "-z"], true).split("\0").filter(Boolean);
+        const indexed = this.runGit(["ls-files", "--cached", "-z"], true)
+          .split("\0")
+          .filter(Boolean);
         newFiles = Array.from(new Set([...indexed, ...untrackedFiles])).filter((file) => {
-          try { fs.lstatSync(path.resolve(repoRoot, file)); return true; }
-          catch (error) {
+          try {
+            fs.lstatSync(path.resolve(repoRoot, file));
+            return true;
+          } catch (error) {
             if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
             throw error;
           }
@@ -161,14 +172,14 @@ export class GitScopeResolver {
 
             if (totalLimitReached) {
               untrackedPatches.push(
-                `diff --git ${JSON.stringify(`a/${uf}`)} ${quoted}\nnew file mode ${mode}\n--- /dev/null\n+++ ${quoted}\n@@ -0,0 +1 @@\n+ [Total untracked files review limit (${(maxTotalUntrackedSize / (1024 * 1024)).toFixed(0)} MB) reached; content omitted from diff]`
+                `diff --git ${JSON.stringify(`a/${uf}`)} ${quoted}\nnew file mode ${mode}\n--- /dev/null\n+++ ${quoted}\n@@ -0,0 +1 @@\n+ [Total untracked files review limit (${(maxTotalUntrackedSize / (1024 * 1024)).toFixed(0)} MB) reached; content omitted from diff]`,
               );
               continue;
             }
 
             if (stat.isFile() && stat.size > maxUntrackedFileSize) {
               untrackedPatches.push(
-                `diff --git ${JSON.stringify(`a/${uf}`)} ${quoted}\nnew file mode ${mode}\n--- /dev/null\n+++ ${quoted}\n@@ -0,0 +1 @@\n+ [Untracked file size ${(stat.size / (1024 * 1024)).toFixed(2)} MB exceeds inline limit (${(maxUntrackedFileSize / (1024 * 1024)).toFixed(0)} MB); content omitted from diff]`
+                `diff --git ${JSON.stringify(`a/${uf}`)} ${quoted}\nnew file mode ${mode}\n--- /dev/null\n+++ ${quoted}\n@@ -0,0 +1 @@\n+ [Untracked file size ${(stat.size / (1024 * 1024)).toFixed(2)} MB exceeds inline limit (${(maxUntrackedFileSize / (1024 * 1024)).toFixed(0)} MB); content omitted from diff]`,
               );
               continue;
             }
@@ -176,7 +187,7 @@ export class GitScopeResolver {
             if (accumulatedBytes + stat.size > maxTotalUntrackedSize) {
               totalLimitReached = true;
               untrackedPatches.push(
-                `diff --git ${JSON.stringify(`a/${uf}`)} ${quoted}\nnew file mode ${mode}\n--- /dev/null\n+++ ${quoted}\n@@ -0,0 +1 @@\n+ [Total untracked files review limit (${(maxTotalUntrackedSize / (1024 * 1024)).toFixed(0)} MB) reached; content omitted from diff]`
+                `diff --git ${JSON.stringify(`a/${uf}`)} ${quoted}\nnew file mode ${mode}\n--- /dev/null\n+++ ${quoted}\n@@ -0,0 +1 @@\n+ [Total untracked files review limit (${(maxTotalUntrackedSize / (1024 * 1024)).toFixed(0)} MB) reached; content omitted from diff]`,
               );
               continue;
             }
@@ -201,14 +212,16 @@ export class GitScopeResolver {
             const addedLines = trimmed.length > 0 ? "+" + trimmed.replace(/\n/g, "\n+") : "";
 
             untrackedPatches.push(
-              `diff --git ${JSON.stringify(`a/${uf}`)} ${quoted}\nnew file mode ${mode}\n--- /dev/null\n+++ ${quoted}\n${lineCount ? `@@ -0,0 +1,${lineCount} @@\n${addedLines}${endsWithNewline ? "\n" : "\n\\ No newline at end of file\n"}` : ""}`
+              `diff --git ${JSON.stringify(`a/${uf}`)} ${quoted}\nnew file mode ${mode}\n--- /dev/null\n+++ ${quoted}\n${lineCount ? `@@ -0,0 +1,${lineCount} @@\n${addedLines}${endsWithNewline ? "\n" : "\n\\ No newline at end of file\n"}` : ""}`,
             );
           } catch (err) {
             throw new Error(`Cannot read worktree file '${uf}': ${(err as Error).message}`);
           }
         }
         if (untrackedPatches.length > 0) {
-          patch = patch ? `${patch}\n\n${untrackedPatches.join("\n\n")}` : untrackedPatches.join("\n\n");
+          patch = patch
+            ? `${patch}\n\n${untrackedPatches.join("\n\n")}`
+            : untrackedPatches.join("\n\n");
         }
       }
     } else if (target === "staged") {
@@ -231,20 +244,28 @@ export class GitScopeResolver {
         // --format= 不会抑制标签头，标签信息会混入 patch 与 changedFiles[0]。
         const commit = this.runGit(["rev-parse", "--verify", `${target}^{commit}`], true).trim();
         // Check if merge commit (has more than 1 parent)
-        const parents = this.runGit(["rev-list", "--parents", "-n", "1", commit], true).trim().split(" ");
+        const parents = this.runGit(["rev-list", "--parents", "-n", "1", commit], true)
+          .trim()
+          .split(" ");
         if (parents.length > 2) {
           isMergeCommit = true;
           baseCommit = parents[1];
           // For merge commits, diff against first parent by default and note merge status
           patch = this.runGit(["diff", `${commit}^1`, commit, "--"], true);
-          const nameStatus = this.runGit(["diff", "--name-only", "-z", `${commit}^1`, commit, "--"], true);
+          const nameStatus = this.runGit(
+            ["diff", "--name-only", "-z", `${commit}^1`, commit, "--"],
+            true,
+          );
           if (nameStatus.length > 0) {
             changedFiles = Array.from(new Set(nameStatus.split("\0").filter(Boolean)));
           }
         } else {
           baseCommit = parents[1];
           patch = this.runGit(["show", "--format=", commit, "--"], true);
-          const nameStatus = this.runGit(["show", "--name-only", "-z", "--format=", commit, "--"], true);
+          const nameStatus = this.runGit(
+            ["show", "--name-only", "-z", "--format=", commit, "--"],
+            true,
+          );
           if (nameStatus.length > 0) {
             changedFiles = nameStatus.split("\0").filter(Boolean);
           }
@@ -271,7 +292,7 @@ export class GitScopeResolver {
       changedFiles,
       untrackedFiles,
       diffSummary,
-      patch
+      patch,
     };
   }
 }

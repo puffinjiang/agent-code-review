@@ -1,14 +1,14 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { execFileSync } from "node:child_process";
-import { Installer } from "../src/lib/installer.js";
-import { Uninstaller } from "../src/lib/uninstaller.js";
-import { ManifestManager } from "../src/lib/manifest.js";
-import { GitScopeResolver } from "../core/git/scope.js";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { getAdapter } from "../adapters/index.js";
+import { GitScopeResolver } from "../core/git/scope.js";
+import { Installer } from "../src/lib/installer.js";
 import { resolveManagedPath } from "../src/lib/managed-path.js";
+import { ManifestManager } from "../src/lib/manifest.js";
+import { Uninstaller } from "../src/lib/uninstaller.js";
 
 /**
  * Windows 创建符号链接需要开发者模式或管理员权限，缺失时相关用例会以 EPERM 失败。
@@ -31,15 +31,23 @@ const canSymlink = symlinksAvailable();
 describe("Review safety regressions", () => {
   let root: string;
   let repo: string;
-  const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  const git = (...args: string[]) =>
+    execFileSync("git", args, {
+      cwd: repo,
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
   beforeEach(() => {
     root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "acr-regression-")));
     repo = path.join(root, "repo");
     fs.mkdirSync(repo);
-    git("init"); git("config", "user.name", "Test"); git("config", "user.email", "test@example.com");
+    git("init");
+    git("config", "user.name", "Test");
+    git("config", "user.email", "test@example.com");
     git("config", "commit.gpgsign", "false");
     fs.writeFileSync(path.join(repo, "base"), "base\n");
-    git("add", "."); git("commit", "-m", "base");
+    git("add", ".");
+    git("commit", "-m", "base");
   });
   afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
 
@@ -51,19 +59,23 @@ describe("Review safety regressions", () => {
   });
 
   // Win32 无法表示含换行或尾随空格的文件名（会被静默规范化，导致读回时 ENOENT）。
-  it.skipIf(process.platform === "win32")("preserves special filenames in untracked and staged scopes", () => {
-    const name = " 中文 file\n.ts ";
-    fs.writeFileSync(path.join(repo, name), "export const marker = true;\n");
-    const resolver = new GitScopeResolver(repo);
-    const untracked = resolver.resolve();
-    expect(untracked.untrackedFiles).toContain(name);
-    expect(untracked.patch).toContain("+export const marker = true;");
-    git("add", "--", name);
-    expect(resolver.resolve({ target: "staged" }).changedFiles).toEqual([name]);
-  });
+  it.skipIf(process.platform === "win32")(
+    "preserves special filenames in untracked and staged scopes",
+    () => {
+      const name = " 中文 file\n.ts ";
+      fs.writeFileSync(path.join(repo, name), "export const marker = true;\n");
+      const resolver = new GitScopeResolver(repo);
+      const untracked = resolver.resolve();
+      expect(untracked.untrackedFiles).toContain(name);
+      expect(untracked.patch).toContain("+export const marker = true;");
+      git("add", "--", name);
+      expect(resolver.resolve({ target: "staged" }).changedFiles).toEqual([name]);
+    },
+  );
 
   it("reviews unstaged edits to indexed files before the first commit", () => {
-    const unborn = path.join(root, "unborn"); fs.mkdirSync(unborn);
+    const unborn = path.join(root, "unborn");
+    fs.mkdirSync(unborn);
     execFileSync("git", ["init"], { cwd: unborn, stdio: "ignore" });
     fs.writeFileSync(path.join(unborn, "new.ts"), "staged version\n");
     execFileSync("git", ["add", "new.ts"], { cwd: unborn });
@@ -74,25 +86,32 @@ describe("Review safety regressions", () => {
     expect(scope.patch).toContain("+current version");
     expect(scope.patch).not.toContain("+staged version");
     expect(scope.patch).not.toContain("+1,0 @@");
-    expect(new GitScopeResolver(unborn).resolve({ target: "staged" }).patch).toContain("+staged version");
+    expect(new GitScopeResolver(unborn).resolve({ target: "staged" }).patch).toContain(
+      "+staged version",
+    );
   });
 
-  it.skipIf(!canSymlink)("reviews a symlink target string rather than its external contents", () => {
-    fs.writeFileSync(path.join(root, "secret"), "OUTSIDE_SECRET_MARKER");
-    fs.symlinkSync("../secret", path.join(repo, "link"));
-    const scope = new GitScopeResolver(repo).resolve();
-    expect(scope.patch).toContain("120000");
-    expect(scope.patch).toMatch(/\+\.\.[\/\\]secret/);
-    expect(scope.patch).not.toContain("OUTSIDE_SECRET_MARKER");
-  });
+  it.skipIf(!canSymlink)(
+    "reviews a symlink target string rather than its external contents",
+    () => {
+      fs.writeFileSync(path.join(root, "secret"), "OUTSIDE_SECRET_MARKER");
+      fs.symlinkSync("../secret", path.join(repo, "link"));
+      const scope = new GitScopeResolver(repo).resolve();
+      expect(scope.patch).toContain("120000");
+      expect(scope.patch).toMatch(/\+\.\.[/\\]secret/);
+      expect(scope.patch).not.toContain("OUTSIDE_SECRET_MARKER");
+    },
+  );
 
   it("uses only the first-parent changes for a merge", () => {
     git("checkout", "-b", "feature");
     fs.writeFileSync(path.join(repo, "feature.txt"), "feature");
-    git("add", "."); git("commit", "-m", "feature");
+    git("add", ".");
+    git("commit", "-m", "feature");
     git("checkout", "-");
     fs.writeFileSync(path.join(repo, "main.txt"), "main");
-    git("add", "."); git("commit", "-m", "main");
+    git("add", ".");
+    git("commit", "-m", "main");
     git("merge", "--no-ff", "feature", "-m", "merge");
     const scope = new GitScopeResolver(repo).resolve({ target: "HEAD" });
     expect(scope.isMergeCommit).toBe(true);
@@ -112,16 +131,21 @@ describe("Review safety regressions", () => {
     expect(fs.readFileSync(file, "utf-8")).not.toContain("USER_CUSTOMIZATION");
   });
 
-  it.each(["", "# existing\nmodel = 'user-model'\n"])("never touches an existing shared config (%j)", (original) => {
-    fs.mkdirSync(path.join(root, ".codex"));
-    const config = path.join(root, ".codex/config.toml");
-    fs.writeFileSync(config, original);
-    const installer = new Installer({ homeDir: root, platform: "codex" });
-    expect(installer.execute().success).toBe(true);
-    expect(installer.execute().items.every((item) => item.action === "skip-identical")).toBe(true);
-    expect(new Uninstaller({ homeDir: root }).execute().success).toBe(true);
-    expect(fs.readFileSync(config, "utf-8")).toBe(original);
-  });
+  it.each(["", "# existing\nmodel = 'user-model'\n"])(
+    "never touches an existing shared config (%j)",
+    (original) => {
+      fs.mkdirSync(path.join(root, ".codex"));
+      const config = path.join(root, ".codex/config.toml");
+      fs.writeFileSync(config, original);
+      const installer = new Installer({ homeDir: root, platform: "codex" });
+      expect(installer.execute().success).toBe(true);
+      expect(installer.execute().items.every((item) => item.action === "skip-identical")).toBe(
+        true,
+      );
+      expect(new Uninstaller({ homeDir: root }).execute().success).toBe(true);
+      expect(fs.readFileSync(config, "utf-8")).toBe(original);
+    },
+  );
 
   it("creates no shared config and retires legacy manifest entries", () => {
     expect(new Installer({ homeDir: root, platform: "codex" }).execute().success).toBe(true);
@@ -132,23 +156,39 @@ describe("Review safety regressions", () => {
     // 旧版清单残留的注册条目，应在重新安装时退役
     const manifest = ManifestManager.load(root)!;
     manifest.files.push({
-      path: ".codex/config.toml", hash: "a".repeat(64), platform: "codex",
-      installedAt: manifest.installedAt, sharedConfig: true, originalContent: ""
+      path: ".codex/config.toml",
+      hash: "a".repeat(64),
+      platform: "codex",
+      installedAt: manifest.installedAt,
+      sharedConfig: true,
+      originalContent: "",
     });
     ManifestManager.save(root, manifest);
     expect(new Installer({ homeDir: root, platform: "codex" }).execute().success).toBe(true);
-    expect(ManifestManager.load(root)!.files.map((f) => f.path)).not.toContain(".codex/config.toml");
+    expect(ManifestManager.load(root)!.files.map((f) => f.path)).not.toContain(
+      ".codex/config.toml",
+    );
   });
 
   it("upgrades an older single-platform manifest without losing file ownership", () => {
-    const options = { workspaceRoot: repo, scope: "local" as const, platform: "antigravity" as const };
+    const options = {
+      workspaceRoot: repo,
+      scope: "local" as const,
+      platform: "antigravity" as const,
+    };
     new Installer(options).execute();
     const manifest = ManifestManager.load(repo)!;
-    fs.writeFileSync(ManifestManager.getManifestPath(repo), JSON.stringify({
-      schemaVersion: "1.0.0", packageVersion: "0.1.0", platform: "antigravity",
-      installedAt: manifest.installedAt, updatedAt: manifest.updatedAt,
-      files: manifest.files.map(({ path, hash, installedAt }) => ({ path, hash, installedAt }))
-    }));
+    fs.writeFileSync(
+      ManifestManager.getManifestPath(repo),
+      JSON.stringify({
+        schemaVersion: "1.0.0",
+        packageVersion: "0.1.0",
+        platform: "antigravity",
+        installedAt: manifest.installedAt,
+        updatedAt: manifest.updatedAt,
+        files: manifest.files.map(({ path, hash, installedAt }) => ({ path, hash, installedAt })),
+      }),
+    );
     expect(new Installer(options).execute().success).toBe(true);
     expect(ManifestManager.load(repo)?.platforms).toEqual(["antigravity"]);
     expect(new Uninstaller({ workspaceRoot: repo, scope: "local" }).execute().success).toBe(true);
@@ -166,8 +206,12 @@ describe("Review safety regressions", () => {
     // （旧语义下这意味着「由本工具创建」，会被直接删除）
     const manifest = ManifestManager.load(root)!;
     manifest.files.push({
-      path: ".codex/config.toml", hash: ManifestManager.computeHash("merged"),
-      platform: "codex", installedAt: manifest.installedAt, sharedConfig: true, originalContent: null
+      path: ".codex/config.toml",
+      hash: ManifestManager.computeHash("merged"),
+      platform: "codex",
+      installedAt: manifest.installedAt,
+      sharedConfig: true,
+      originalContent: null,
     });
     ManifestManager.save(root, manifest);
 
@@ -185,12 +229,14 @@ describe("Review safety regressions", () => {
   it.each([
     'agents = { correctness_reviewer = { description = "user" } }\n',
     '[agents."security_reviewer"]\ndescription = "user"\n',
-    'model = "unterminated\n'
+    'model = "unterminated\n',
   ])("leaves unparseable or user-owned Codex config untouched (%j)", (original) => {
     fs.mkdirSync(path.join(root, ".codex"));
     const config = path.join(root, ".codex/config.toml");
     fs.writeFileSync(config, original);
-    expect(new Installer({ homeDir: root, platform: "codex", force: true }).execute().success).toBe(true);
+    expect(new Installer({ homeDir: root, platform: "codex", force: true }).execute().success).toBe(
+      true,
+    );
     expect(fs.readFileSync(config, "utf-8")).toBe(original);
   });
 
@@ -202,8 +248,10 @@ describe("Review safety regressions", () => {
     new Installer({ homeDir: root, platform: "codex" }).execute();
     const manifest = ManifestManager.load(root)!;
     manifest.files.push({
-      path: ".codex/config.toml", hash: ManifestManager.computeHash("merged"),
-      platform: "codex", installedAt: manifest.installedAt
+      path: ".codex/config.toml",
+      hash: ManifestManager.computeHash("merged"),
+      platform: "codex",
+      installedAt: manifest.installedAt,
     });
     ManifestManager.save(root, manifest);
 
@@ -218,7 +266,14 @@ describe("Review safety regressions", () => {
     const outside = path.join(root, "outside.txt");
     fs.writeFileSync(outside, "known");
     const manifest = ManifestManager.load(repo)!;
-    manifest.files = [{ path: "../outside.txt", hash: ManifestManager.computeHash("known"), platform: "claude-code", installedAt: manifest.installedAt }];
+    manifest.files = [
+      {
+        path: "../outside.txt",
+        hash: ManifestManager.computeHash("known"),
+        platform: "claude-code",
+        installedAt: manifest.installedAt,
+      },
+    ];
     ManifestManager.save(repo, manifest);
     const result = new Uninstaller({ homeDir: repo, force: true }).execute();
     expect(result.success).toBe(false);
@@ -227,18 +282,33 @@ describe("Review safety regressions", () => {
   });
 
   it.skipIf(!canSymlink)("blocks symlinked managed directories on install and uninstall", () => {
-    const outside = path.join(root, "outside"); fs.mkdirSync(outside);
+    const outside = path.join(root, "outside");
+    fs.mkdirSync(outside);
     fs.symlinkSync(outside, path.join(repo, ".claude"));
     expect(new Installer({ homeDir: repo, platform: "claude-code" }).execute().success).toBe(false);
     expect(fs.readdirSync(outside)).toEqual([]);
     ManifestManager.save(repo, {
-      schemaVersion: "1.0.0", packageVersion: "0.1.0", scope: "global", platforms: ["claude-code"],
-      installedAt: "now", updatedAt: "now", files: [{ path: ".claude/agents/correctness-reviewer.md", hash: ManifestManager.computeHash("known"), platform: "claude-code", installedAt: "now" }]
+      schemaVersion: "1.0.0",
+      packageVersion: "0.1.0",
+      scope: "global",
+      platforms: ["claude-code"],
+      installedAt: "now",
+      updatedAt: "now",
+      files: [
+        {
+          path: ".claude/agents/correctness-reviewer.md",
+          hash: ManifestManager.computeHash("known"),
+          platform: "claude-code",
+          installedAt: "now",
+        },
+      ],
     });
     fs.mkdirSync(path.join(outside, "agents"));
     fs.writeFileSync(path.join(outside, "agents/correctness-reviewer.md"), "known");
     expect(new Uninstaller({ homeDir: repo, force: true }).execute().success).toBe(false);
-    expect(fs.readFileSync(path.join(outside, "agents/correctness-reviewer.md"), "utf-8")).toBe("known");
+    expect(fs.readFileSync(path.join(outside, "agents/correctness-reviewer.md"), "utf-8")).toBe(
+      "known",
+    );
   });
 
   it("supports local all-platform installation without shared skill conflicts", () => {
@@ -251,14 +321,15 @@ describe("Review safety regressions", () => {
   // ---- 跨平台路径归一化（D-01）与卸载删除边界（C.1/C.2）----
 
   it.each(["antigravity", "claude-code", "codex"] as const)(
-    "emits POSIX-only relative paths for %s that satisfy the managed-path allowlist", (platform) => {
+    "emits POSIX-only relative paths for %s that satisfy the managed-path allowlist",
+    (platform) => {
       const files = getAdapter(platform).getTemplateFiles({ isGlobal: true, homeDir: root });
       expect(files.length).toBeGreaterThan(0);
       for (const f of files) {
         expect(f.relativePath).not.toContain("\\");
         expect(() => resolveManagedPath(root, f.relativePath)).not.toThrow();
       }
-    }
+    },
   );
 
   it("installs and uninstalls cleanly when the Antigravity CLI directory exists", () => {
@@ -289,10 +360,22 @@ describe("Review safety regressions", () => {
     }
     // 工具私有目录应被清理，不留空文件夹
     expect(fs.existsSync(path.join(root, ".agents"))).toBe(false);
-    for (const role of ["correctness-reviewer", "security-reviewer", "concurrency-reviewer", "performance-reviewer", "findings-verifier"]) {
-      expect(fs.existsSync(path.join(root, ".gemini/config/agents", role)), `${role} 角色目录应被清理`).toBe(false);
+    for (const role of [
+      "correctness-reviewer",
+      "security-reviewer",
+      "concurrency-reviewer",
+      "performance-reviewer",
+      "findings-verifier",
+    ]) {
+      expect(
+        fs.existsSync(path.join(root, ".gemini/config/agents", role)),
+        `${role} 角色目录应被清理`,
+      ).toBe(false);
     }
-    expect(fs.existsSync(path.join(root, ".gemini/config/agents")), ".gemini/config/agents 宿主目录应保留").toBe(true);
+    expect(
+      fs.existsSync(path.join(root, ".gemini/config/agents")),
+      ".gemini/config/agents 宿主目录应保留",
+    ).toBe(true);
   });
 
   it("keeps host-owned directories in a local workspace too", () => {

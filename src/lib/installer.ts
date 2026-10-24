@@ -1,13 +1,11 @@
-import * as fs from "node:fs";
-import * as path from "node:path";
-import * as os from "node:os";
 import * as crypto from "node:crypto";
-import { ManifestManager, InstallationManifest, ManifestFileEntry } from "./manifest.js";
-import { SupportedPlatform, getAdapter, TemplateFile } from "../../adapters/index.js";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { getAdapter, type SupportedPlatform, type TemplateFile } from "../../adapters/index.js";
 import { ProcessLock } from "./lock.js";
-
-
-import { resolveManagedPath, LEGACY_SHARED_CONFIG } from "./managed-path.js";
+import { LEGACY_SHARED_CONFIG, resolveManagedPath } from "./managed-path.js";
+import { type InstallationManifest, type ManifestFileEntry, ManifestManager } from "./manifest.js";
 import { getPackageVersion } from "./version.js";
 
 export type InstallScope = "global" | "local";
@@ -91,7 +89,9 @@ export class Installer {
       }
       fs.renameSync(tmpPath, fullPath);
     } catch (writeErr) {
-      try { fs.unlinkSync(tmpPath); } catch {}
+      try {
+        fs.unlinkSync(tmpPath);
+      } catch {}
       throw writeErr;
     }
   }
@@ -168,7 +168,7 @@ export class Installer {
       const templateFiles: TemplateFile[] = adapter.getTemplateFiles({
         templateRootDir: this.templateDir,
         isGlobal: this.scope === "global",
-        homeDir: this.homeDir
+        homeDir: this.homeDir,
       });
 
       for (const tpl of templateFiles) {
@@ -231,7 +231,9 @@ export class Installer {
                 relativePath: tpl.relativePath,
                 platform: p,
                 action: "conflict",
-                reason: previous ? "Managed file has user edits; use --force to replace it." : "Unmanaged file exists; use --force to replace it.",
+                reason: previous
+                  ? "Managed file has user edits; use --force to replace it."
+                  : "Unmanaged file exists; use --force to replace it.",
                 sourceContent: tpl.sourceContent,
                 hash: newHash,
               });
@@ -255,8 +257,16 @@ export class Installer {
         ({ items, conflicts } = this.plan());
         resolveManagedPath(baseDir, ".agent-code-review.json");
       } catch (error) {
-        return { scope: this.scope, baseDir, platforms: this.getTargetPlatforms(), success: false,
-          dryRun: this.dryRun, items: [], manifestSaved: false, errors: [(error as Error).message] };
+        return {
+          scope: this.scope,
+          baseDir,
+          platforms: this.getTargetPlatforms(),
+          success: false,
+          dryRun: this.dryRun,
+          items: [],
+          manifestSaved: false,
+          errors: [(error as Error).message],
+        };
       }
       const targetPlatforms = this.getTargetPlatforms();
 
@@ -270,8 +280,8 @@ export class Installer {
           items,
           manifestSaved: false,
           errors: [
-            `Installation aborted due to ${conflicts.length} conflicting file(s): ${conflicts.join(", ")}; shared configuration conflicts require manual resolution.`
-          ]
+            `Installation aborted due to ${conflicts.length} conflicting file(s): ${conflicts.join(", ")}; shared configuration conflicts require manual resolution.`,
+          ],
         };
       }
 
@@ -283,7 +293,7 @@ export class Installer {
         dryRun: true,
         items,
         manifestSaved: false,
-        errors: []
+        errors: [],
       };
     }
 
@@ -296,9 +306,14 @@ export class Installer {
         const manifest = ManifestManager.load(baseDir);
         const currentVersion = getPackageVersion();
         const targetPlatforms = this.getTargetPlatforms();
-        const hasLegacyEntry = manifest && manifest.files.some((f) => f.path === LEGACY_SHARED_CONFIG);
+        const hasLegacyEntry =
+          manifest && manifest.files.some((f) => f.path === LEGACY_SHARED_CONFIG);
         const isVersionCurrent = manifest?.packageVersion === currentVersion;
-        const allCovered = manifest && !hasLegacyEntry && isVersionCurrent && targetPlatforms.every((p) => manifest.platforms.includes(p));
+        const allCovered =
+          manifest &&
+          !hasLegacyEntry &&
+          isVersionCurrent &&
+          targetPlatforms.every((p) => manifest.platforms.includes(p));
 
         if (allCovered) {
           const quickPlan = this.plan();
@@ -315,7 +330,9 @@ export class Installer {
           ) {
             this.purgeStaleTempFiles(baseDir, quickPlan.items);
             // S-2 修复：已安装平台应取 manifest 的全集并集，而不是仅回显本次的目标参数
-            const combinedPlatforms = Array.from(new Set([...manifest.platforms, ...targetPlatforms]));
+            const combinedPlatforms = Array.from(
+              new Set([...manifest.platforms, ...targetPlatforms]),
+            );
             return {
               scope: this.scope,
               baseDir,
@@ -325,7 +342,7 @@ export class Installer {
               items: quickPlan.items,
               manifestSaved: false,
               alreadyUpToDate: true,
-              errors: []
+              errors: [],
             };
           }
         }
@@ -347,7 +364,7 @@ export class Installer {
         dryRun: false,
         items: [],
         manifestSaved: false,
-        errors: [(error as Error).message]
+        errors: [(error as Error).message],
       };
     }
   }
@@ -361,8 +378,16 @@ export class Installer {
         ({ items, conflicts } = this.plan());
         resolveManagedPath(baseDir, ".agent-code-review.json");
       } catch (error) {
-        return { scope: this.scope, baseDir, platforms: this.getTargetPlatforms(), success: false,
-          dryRun: false, items: [], manifestSaved: false, errors: [(error as Error).message] };
+        return {
+          scope: this.scope,
+          baseDir,
+          platforms: this.getTargetPlatforms(),
+          success: false,
+          dryRun: false,
+          items: [],
+          manifestSaved: false,
+          errors: [(error as Error).message],
+        };
       }
       const targetPlatforms = this.getTargetPlatforms();
 
@@ -376,8 +401,8 @@ export class Installer {
           items,
           manifestSaved: false,
           errors: [
-            `Installation aborted due to ${conflicts.length} conflicting file(s): ${conflicts.join(", ")}; shared configuration conflicts require manual resolution.`
-          ]
+            `Installation aborted due to ${conflicts.length} conflicting file(s): ${conflicts.join(", ")}; shared configuration conflicts require manual resolution.`,
+          ],
         };
       }
 
@@ -387,13 +412,17 @@ export class Installer {
       // C. 临界区内双重检查：若等待锁期间排在前面的进程已完成全部写入且 manifest 登记完整，无需重复写盘
       const existingManifest = ManifestManager.load(baseDir);
       const currentVersion = getPackageVersion();
-      const hasLegacyEntry = existingManifest && existingManifest.files.some((f) => f.path === LEGACY_SHARED_CONFIG);
+      const hasLegacyEntry =
+        existingManifest && existingManifest.files.some((f) => f.path === LEGACY_SHARED_CONFIG);
       const isVersionCurrent = existingManifest?.packageVersion === currentVersion;
-      const allPlatformsCovered = existingManifest && targetPlatforms.every((p) => existingManifest.platforms.includes(p));
+      const allPlatformsCovered =
+        existingManifest && targetPlatforms.every((p) => existingManifest.platforms.includes(p));
       const hasModifications = items.some((i) => i.action === "create" || i.action === "update");
 
       // BUG-2 修复：必须核对现有 manifest.files 是否真正登记了本次 plan 的全部文件且哈希一致
-      const existingManifestMap = new Map(existingManifest?.files.map((f) => [f.path, f.hash]) || []);
+      const existingManifestMap = new Map(
+        existingManifest?.files.map((f) => [f.path, f.hash]) || [],
+      );
       const allFilesRegistered =
         items.length > 0 &&
         items.every((item) => existingManifestMap.get(item.relativePath) === item.hash);
@@ -407,7 +436,9 @@ export class Installer {
         isVersionCurrent
       ) {
         // S-2 修复：已安装平台应取 manifest 的全集并集
-        const combinedPlatforms = Array.from(new Set([...existingManifest.platforms, ...targetPlatforms]));
+        const combinedPlatforms = Array.from(
+          new Set([...existingManifest.platforms, ...targetPlatforms]),
+        );
         return {
           scope: this.scope,
           baseDir,
@@ -417,7 +448,7 @@ export class Installer {
           items,
           manifestSaved: false,
           alreadyUpToDate: true,
-          errors: []
+          errors: [],
         };
       }
 
@@ -462,12 +493,12 @@ export class Installer {
             path: item.relativePath,
             hash: item.hash,
             platform: item.platform,
-            installedAt: now
+            installedAt: now,
           });
         }
 
         const combinedPlatforms = Array.from(
-          new Set([...(existingManifest?.platforms || []), ...targetPlatforms])
+          new Set([...(existingManifest?.platforms || []), ...targetPlatforms]),
         );
 
         const manifest: InstallationManifest = {
@@ -477,7 +508,7 @@ export class Installer {
           platforms: combinedPlatforms,
           installedAt: existingManifest?.installedAt || now,
           updatedAt: now,
-          files: Array.from(manifestFilesMap.values())
+          files: Array.from(manifestFilesMap.values()),
         };
 
         ManifestManager.save(baseDir, manifest);
@@ -490,7 +521,7 @@ export class Installer {
           dryRun: false,
           items,
           manifestSaved: true,
-          errors: []
+          errors: [],
         };
       } catch (err: unknown) {
         // 回滚本次新创建的文件
@@ -519,8 +550,8 @@ export class Installer {
           items,
           manifestSaved: false,
           errors: [
-            `Installation failed during file write: ${(err as Error).message}. All partially written files have been rolled back.`
-          ]
+            `Installation failed during file write: ${(err as Error).message}. All partially written files have been rolled back.`,
+          ],
         };
       }
     });

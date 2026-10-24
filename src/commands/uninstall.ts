@@ -1,6 +1,6 @@
 import * as path from "node:path";
+import type { InstallScope } from "../lib/installer.js";
 import { Uninstaller } from "../lib/uninstaller.js";
-import { InstallScope } from "../lib/installer.js";
 
 export interface UninstallCommandOptions {
   global?: boolean;
@@ -24,7 +24,7 @@ export function runUninstall(options: UninstallCommandOptions = {}): number {
     dryRun: options.dryRun,
     force: options.force,
     homeDir: options.homeDir,
-    workspaceRoot: options.workspaceRoot
+    workspaceRoot: options.workspaceRoot,
   });
 
   const result = uninstaller.execute();
@@ -35,7 +35,9 @@ export function runUninstall(options: UninstallCommandOptions = {}): number {
       console.error(`  - ${err}`);
     }
     if (result.skippedFiles.length > 0) {
-      console.log(`\n💡 --force can remove customized ordinary managed files. Shared or unsafe configuration paths are always preserved.`);
+      console.log(
+        `\n💡 --force can remove customized ordinary managed files. Shared or unsafe configuration paths are always preserved.`,
+      );
     }
     return 1;
   }
@@ -47,15 +49,17 @@ export function runUninstall(options: UninstallCommandOptions = {}): number {
   }
 
   if (result.manualCleanup.length > 0) {
-    console.log(`\n⚠️  Manual cleanup required — these user-owned files were never modified by this run:`);
+    console.log(
+      `\n⚠️  Manual cleanup required — these user-owned files were never modified by this run:`,
+    );
     for (const f of result.manualCleanup) {
       console.log(`  📝 ${path.join(result.baseDir, f)}`);
     }
     console.log(
       `  An older version of Agent Code Review appended reviewer registrations to this file.\n` +
-      `  Codex now auto-discovers agents from .codex/agents/*.toml, so that block is no longer\n` +
-      `  needed. To remove it manually, delete everything between the markers:\n` +
-      `    # --- BEGIN Agent Code Review ---  …  # --- END Agent Code Review ---`
+        `  Codex now auto-discovers agents from .codex/agents/*.toml, so that block is no longer\n` +
+        `  needed. To remove it manually, delete everything between the markers:\n` +
+        `    # --- BEGIN Agent Code Review ---  …  # --- END Agent Code Review ---`,
     );
   }
 

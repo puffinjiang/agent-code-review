@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
-import * as path from "node:path";
 import * as os from "node:os";
+import * as path from "node:path";
 
 export interface DetectedPlatform {
   id: "antigravity" | "claude-code" | "codex";
@@ -17,16 +17,19 @@ export interface DetectedPlatform {
  */
 function hasCommand(cmd: string): boolean {
   const dirs = (process.env.PATH || "").split(path.delimiter).filter(Boolean);
-  const extensions = process.platform === "win32"
-    ? (process.env.PATHEXT || ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean)
-    : [""];
-  return dirs.some((dir) => extensions.some((ext) => {
-    try {
-      return fs.statSync(path.join(dir, cmd + ext)).isFile();
-    } catch {
-      return false;
-    }
-  }));
+  const extensions =
+    process.platform === "win32"
+      ? (process.env.PATHEXT || ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean)
+      : [""];
+  return dirs.some((dir) =>
+    extensions.some((ext) => {
+      try {
+        return fs.statSync(path.join(dir, cmd + ext)).isFile();
+      } catch {
+        return false;
+      }
+    }),
+  );
 }
 
 export function detectPlatforms(homedir: string = os.homedir()): DetectedPlatform[] {
@@ -54,7 +57,7 @@ export function detectPlatforms(homedir: string = os.homedir()): DetectedPlatfor
     id: "antigravity",
     name: "Google Antigravity",
     detected: agyDetected,
-    reason: agyReason
+    reason: agyReason,
   });
 
   // 2. Claude Code
@@ -66,7 +69,10 @@ export function detectPlatforms(homedir: string = os.homedir()): DetectedPlatfor
   } else {
     const claudeJson = path.join(homedir, ".claude.json");
     const claudeConfig = path.join(homedir, ".claude");
-    if (fs.existsSync(claudeJson) || (fs.existsSync(claudeConfig) && fs.readdirSync(claudeConfig).length > 0)) {
+    if (
+      fs.existsSync(claudeJson) ||
+      (fs.existsSync(claudeConfig) && fs.readdirSync(claudeConfig).length > 0)
+    ) {
       claudeDetected = true;
       claudeReason = "Found verified Claude Code configuration in user home";
     }
@@ -75,7 +81,7 @@ export function detectPlatforms(homedir: string = os.homedir()): DetectedPlatfor
     id: "claude-code",
     name: "Claude Code",
     detected: claudeDetected,
-    reason: claudeReason
+    reason: claudeReason,
   });
 
   // 3. OpenAI Codex
@@ -95,7 +101,7 @@ export function detectPlatforms(homedir: string = os.homedir()): DetectedPlatfor
     id: "codex",
     name: "OpenAI Codex",
     detected: codexDetected,
-    reason: codexReason
+    reason: codexReason,
   });
 
   return results;

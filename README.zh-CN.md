@@ -58,13 +58,14 @@ npx agent-code-review@latest uninstall --local
 
 ### 各平台安装路径规范
 
-| 平台 | 全局安装路径（`--global`，默认） | 项目级安装路径（`--local`） |
-| :--- | :--- | :--- |
+| 平台                   | 全局安装路径（`--global`，默认）                                                                | 项目级安装路径（`--local`）                                                   |
+| :--------------------- | :---------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------- |
 | **Google Antigravity** | `~/.gemini/config/skills/code-review/SKILL.md`<br>`~/.gemini/config/agents/<reviewer>/agent.md` | `.agents/skills/code-review/SKILL.md`<br>`.agents/agents/<reviewer>/agent.md` |
-| **Claude Code** | `~/.claude/skills/code-review/SKILL.md`<br>`~/.claude/agents/<reviewer>.md` | `.claude/skills/code-review/SKILL.md`<br>`.claude/agents/<reviewer>.md` |
-| **OpenAI Codex** | `~/.agents/skills/code-review/SKILL.md`<br>`~/.codex/agents/<reviewer>.toml` | `.agents/skills/code-review/SKILL.md`<br>`.codex/agents/<reviewer>.toml` |
+| **Claude Code**        | `~/.claude/skills/code-review/SKILL.md`<br>`~/.claude/agents/<reviewer>.md`                     | `.claude/skills/code-review/SKILL.md`<br>`.claude/agents/<reviewer>.md`       |
+| **OpenAI Codex**       | `~/.agents/skills/code-review/SKILL.md`<br>`~/.codex/agents/<reviewer>.toml`                    | `.agents/skills/code-review/SKILL.md`<br>`.codex/agents/<reviewer>.toml`      |
 
 ### 安装安全保障
+
 - **用户权限安全**：使用 Node.js `os.homedir()`，绝不要求 `sudo` 提权。
 - **清单与哈希管理**：维护 `.agent-code-review.json` 清单，精准记录受管文件路径与 SHA-256 哈希。
 - **绝不写入已有用户配置**：安装只创建自身拥有的目录与文件，绝不新增、改写或删除任何已存在的配置文件，即使使用 `--force`。Codex 会自动发现 `~/.codex/agents/*.toml` 中的 reviewer，因此无需在 `config.toml` 中注册。卸载仅移除本次安装的内容；若旧版本曾向 Codex 配置追加过内容，卸载只会打印手动清理指引，不会修改该文件。
@@ -79,11 +80,11 @@ CLI 负责安装模板、检查文件完整性和解析 Git 范围；审查由�
 
 ### 平台验证状态矩阵
 
-| 平台 | 模板与配置格式 | 平台验证状态 | 审查启动指令 |
-| :--- | :--- | :--- | :--- |
-| **Google Antigravity** | 已实现（`~/.gemini/config/...`） | ✅ **已验证**（原生 Agent 发现、子代理派发与多 Agent 审查流程已实测） | `/code-review` |
-| **Claude Code** | 已实现（`~/.claude/...`） | ✅ **已验证**（原生 Slash Command、子代理提示词派发与审查流程已实测） | `/code-review` |
-| **OpenAI Codex** | 已实现（`~/.codex/agents/*.toml` 自动发现） | ✅ **已验证**（Skill 自动发现 `$code-review`、Agent 配置与审查流程已实测） | `$code-review` |
+| 平台                   | 模板与配置格式                              | 平台验证状态                                                               | 审查启动指令   |
+| :--------------------- | :------------------------------------------ | :------------------------------------------------------------------------- | :------------- |
+| **Google Antigravity** | 已实现（`~/.gemini/config/...`）            | ✅ **已验证**（原生 Agent 发现、子代理派发与多 Agent 审查流程已实测）      | `/code-review` |
+| **Claude Code**        | 已实现（`~/.claude/...`）                   | ✅ **已验证**（原生 Slash Command、子代理提示词派发与审查流程已实测）      | `/code-review` |
+| **OpenAI Codex**       | 已实现（`~/.codex/agents/*.toml` 自动发现） | ✅ **已验证**（Skill 自动发现 `$code-review`、Agent 配置与审查流程已实测） | `$code-review` |
 
 > [!NOTE]
 > 以上所有支持平台均已在原生宿主运行环境中完成实际联调与功能验证。您可随时执行 `npx agent-code-review doctor` 诊断安装状态、目录完整性及 Git 仓库配置。
@@ -162,7 +163,7 @@ CLI 负责安装模板、检查文件完整性和解析 Git 范围；审查由�
 - **P2**：直接影响业务正确性或可用性的普通功能缺陷。
 - **P3**：轻微缺陷或局部可优化问题。
 
-*纯代码格式、缩进或个人偏好风格严格不在 Bug 报告中呈现。*
+_纯代码格式、缩进或个人偏好风格严格不在 Bug 报告中呈现。_
 
 ---
 
