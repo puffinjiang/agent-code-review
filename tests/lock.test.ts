@@ -292,6 +292,50 @@ describe("ProcessLock Unit Tests", () => {
     fs.unlinkSync(trashPath);
   });
 
+  it("should log warning to stderr when restoreMovedLock encounters unexpected error", () => {
+    const lockPath = ProcessLock.getLockPath(tempDir);
+    const nonExistentTrash = path.join(tempDir, "non-existent-trash.lock");
+
+    const stderrSpy: string[] = [];
+    const origWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      stderrSpy.push(String(chunk));
+      return true;
+    }) as any;
+
+    try {
+      // @ts-expect-error private method test
+      ProcessLock.restoreMovedLock(nonExistentTrash, lockPath);
+      expect(stderrSpy.some((s) => s.includes("警告: 还原锁文件异常 (ENOENT)"))).toBe(true);
+    } finally {
+      process.stderr.write = origWrite;
+    }
+  });
+
+  it("should re-verify startEpoch after 1000ms throttled window during contention", () => {
+    let getStartTimeCalls = 0;
+    const origGetStartTime = ProcessLock.getProcessStartTime.bind(ProcessLock);
+    ProcessLock.getProcessStartTime = (pid: number) => {
+      getStartTimeCalls++;
+      return origGetStartTime(pid);
+    };
+
+    const releaseA = ProcessLock.acquire(tempDir);
+    try {
+      // Waiting 1150ms should trigger initial check (1) + throttled check after 1000ms (1) = 2 calls
+      // without re-running ps every 50ms (which would have been ~23 calls)
+      expect(() =>
+        ProcessLock.acquire(tempDir, { timeoutMs: 1150, retryIntervalMs: 50 })
+      ).toThrow(/获取安装锁超时/);
+
+      expect(getStartTimeCalls).toBeGreaterThanOrEqual(2);
+      expect(getStartTimeCalls).toBeLessThanOrEqual(4);
+    } finally {
+      ProcessLock.getProcessStartTime = origGetStartTime;
+      releaseA();
+    }
+  });
+
   it.skipIf(!canSymlink)("should refuse live and dangling symlinks at lock path immediately and return structured error in Installer/Uninstaller (D-14)", () => {
     const lockPath = ProcessLock.getLockPath(tempDir);
     const externalTarget = path.join(tempDir, "external.txt");

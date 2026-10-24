@@ -202,6 +202,9 @@ export class ProcessLock {
         } catch {
           return;
         }
+      } else {
+        // 非预期的系统调用异常（如 EMFILE、EACCES 等），保留 trashPath 并输出告警便于排查
+        process.stderr.write(`[agent-code-review] 警告: 还原锁文件异常 (${code}): ${(err as Error).message}\n`);
       }
     }
   }
@@ -244,6 +247,7 @@ export class ProcessLock {
     const startEpoch = Math.floor(Date.now() - process.uptime() * 1000);
     let notified = false;
     let cachedVerifiedToken: string | null = null;
+    let lastEpochCheckTime = startTime;
 
     if (!fs.existsSync(baseDir)) fs.mkdirSync(baseDir, { recursive: true });
 
@@ -265,6 +269,18 @@ export class ProcessLock {
               this.breakStale(lockPath, data.token);
               cachedVerifiedToken = null;
               continue;
+            }
+
+            // 节流复核：轮询期间若持锁者异常退出且其 PID 被操作系统快速复用，
+            // 每隔 1000ms 复核一次 startEpoch，防止 5 秒等待期内因 PID 复用而退化为超时失败
+            if (typeof data.startEpoch === "number" && Date.now() - lastEpochCheckTime >= 1000) {
+              const actualStartTime = this.getProcessStartTime(data.pid);
+              if (actualStartTime === null || Math.abs(actualStartTime - data.startEpoch) > 2500) {
+                this.breakStale(lockPath, data.token);
+                cachedVerifiedToken = null;
+                continue;
+              }
+              lastEpochCheckTime = Date.now();
             }
           } else {
             // 首次遇到该 token，执行进程身份与存活核验
@@ -294,6 +310,7 @@ export class ProcessLock {
             }
 
             cachedVerifiedToken = data.token;
+            lastEpochCheckTime = Date.now();
           }
 
           // PID 存活且身份无误 → 100% 确定为真实的并发 agent-code-review 活锁！
