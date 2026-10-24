@@ -13,7 +13,7 @@ describe("Git Scope Resolver", () => {
     execFileSync("git", args, { cwd: tempDir, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 
   beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "acr-git-test-"));
+    tempDir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "acr-git-test-")));
     git("init");
     git("config", "user.name", "Test User");
     git("config", "user.email", "test@example.com");
@@ -152,7 +152,7 @@ describe("Git Scope Resolver", () => {
     // Execute resolver instantiated with subA as cwd
     const subResolver = new GitScopeResolver(subA);
     expect(subResolver.isGitRepo()).toBe(true);
-    expect(fs.realpathSync(subResolver.getRepoRoot())).toBe(fs.realpathSync(tempDir));
+    expect(path.resolve(subResolver.getRepoRoot())).toBe(path.resolve(tempDir));
 
     const result = subResolver.resolve({ target: "uncommitted" });
 

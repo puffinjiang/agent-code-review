@@ -33,7 +33,7 @@ describe("Review safety regressions", () => {
   let repo: string;
   const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
   beforeEach(() => {
-    root = fs.mkdtempSync(path.join(os.tmpdir(), "acr-regression-"));
+    root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "acr-regression-")));
     repo = path.join(root, "repo");
     fs.mkdirSync(repo);
     git("init"); git("config", "user.name", "Test"); git("config", "user.email", "test@example.com");
@@ -82,7 +82,7 @@ describe("Review safety regressions", () => {
     fs.symlinkSync("../secret", path.join(repo, "link"));
     const scope = new GitScopeResolver(repo).resolve();
     expect(scope.patch).toContain("120000");
-    expect(scope.patch).toContain("+../secret");
+    expect(scope.patch).toMatch(/\+\.\.[\/\\]secret/);
     expect(scope.patch).not.toContain("OUTSIDE_SECRET_MARKER");
   });
 

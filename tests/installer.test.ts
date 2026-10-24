@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import { pathToFileURL } from "node:url";
 import { execSync, execFile } from "node:child_process";
 import { buildSync } from "esbuild";
 import { Installer } from "../src/lib/installer.js";
@@ -14,8 +15,8 @@ describe("Global First Installer Lifecycle", () => {
   let tempWorkspace: string;
 
   beforeEach(() => {
-    tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "acr-home-test-"));
-    tempWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), "acr-workspace-test-"));
+    tempHome = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "acr-home-test-")));
+    tempWorkspace = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "acr-workspace-test-")));
     execSync("git init", { cwd: tempWorkspace, stdio: "ignore" });
   });
 
@@ -163,17 +164,18 @@ describe("Global First Installer Lifecycle", () => {
     const skillPath = path.join(tempHome, ".claude/skills/code-review/SKILL.md");
     expect(fs.existsSync(skillPath)).toBe(true);
 
-    // 2. User manually chmods to 0o600
-    fs.chmodSync(skillPath, 0o600);
+    // 2. User manually chmods (0o600 on POSIX; 0o666 on Windows NTFS)
+    const targetMode = process.platform === "win32" ? 0o666 : 0o600;
+    fs.chmodSync(skillPath, targetMode);
     const initialMode = fs.statSync(skillPath).mode & 0o777;
-    expect(initialMode).toBe(0o600);
+    expect(initialMode).toBe(targetMode);
 
     // 3. Force re-install / update
     new Installer({ homeDir: tempHome, platform: "claude-code", force: true }).execute();
 
-    // 4. Mode must still be 0o600 (not reset to umask 0o644)
+    // 4. Mode must still be targetMode (not reset to default)
     const updatedMode = fs.statSync(skillPath).mode & 0o777;
-    expect(updatedMode).toBe(0o600);
+    expect(updatedMode).toBe(targetMode);
   });
 
   it("should ignore leftover installer tmp files via git ignore (N-2)", () => {
@@ -310,7 +312,7 @@ describe("Global First Installer Lifecycle", () => {
     const runChildInstall = (platform: "claude-code" | "codex", holdLockMs: number) =>
       new Promise<{ success: boolean; platforms: string[] }>((resolve, reject) => {
         const script = `
-          import { Installer, ProcessLock } from ${JSON.stringify(bundlePath)};
+          import { Installer, ProcessLock } from ${JSON.stringify(pathToFileURL(bundlePath).href)};
           const homeDir = ${JSON.stringify(tempHome)};
           const templateDir = ${JSON.stringify(assetsRoot)};
           const platform = ${JSON.stringify(platform)};
@@ -386,10 +388,17 @@ describe("Global First Installer Lifecycle", () => {
   });
 
   it("should atomically roll back written files when installation fails mid-write (V-11)", () => {
-    // Set up a directory with mode 0o555 (traversable for lstat during plan(), but unwritable)
-    const skillsDir = path.join(tempHome, ".claude/skills/code-review");
-    fs.mkdirSync(skillsDir, { recursive: true });
-    fs.chmodSync(skillsDir, 0o555);
+    // Intercept Installer.writeAtomic: allow the first file to succeed, but fail on subsequent file
+    // to simulate a real mid-write error (e.g. disk full, unexpected I/O failure) across all platforms
+    const originalWriteAtomic = Installer.writeAtomic;
+    let writeCount = 0;
+    Installer.writeAtomic = (fullPath: string, content: string) => {
+      writeCount++;
+      if (writeCount > 1) {
+        throw new Error("Simulated disk full or I/O failure mid-installation");
+      }
+      return originalWriteAtomic.call(Installer, fullPath, content);
+    };
 
     try {
       const installer = new Installer({
@@ -413,8 +422,7 @@ describe("Global First Installer Lifecycle", () => {
       // No manifest file should exist
       expect(fs.existsSync(path.join(tempHome, ".agent-code-review.json"))).toBe(false);
     } finally {
-      // Restore permissions for cleanup
-      try { fs.chmodSync(skillsDir, 0o777); } catch { /* ignore */ }
+      Installer.writeAtomic = originalWriteAtomic;
     }
   });
 });
