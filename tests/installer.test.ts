@@ -157,6 +157,69 @@ describe("Global First Installer Lifecycle", () => {
     expect(fs.existsSync(path.join(tempHome, ".agent-code-review.json"))).toBe(false);
   });
 
+  it("should preserve user customized file mode (e.g. 0600) upon update (N-1)", () => {
+    // 1. Initial installation
+    new Installer({ homeDir: tempHome, platform: "claude-code" }).execute();
+    const skillPath = path.join(tempHome, ".claude/skills/code-review/SKILL.md");
+    expect(fs.existsSync(skillPath)).toBe(true);
+
+    // 2. User manually chmods to 0o600
+    fs.chmodSync(skillPath, 0o600);
+    const initialMode = fs.statSync(skillPath).mode & 0o777;
+    expect(initialMode).toBe(0o600);
+
+    // 3. Force re-install / update
+    new Installer({ homeDir: tempHome, platform: "claude-code", force: true }).execute();
+
+    // 4. Mode must still be 0o600 (not reset to umask 0o644)
+    const updatedMode = fs.statSync(skillPath).mode & 0o777;
+    expect(updatedMode).toBe(0o600);
+  });
+
+  it("should ignore leftover installer tmp files via git ignore (N-2)", () => {
+    // 1. Local installation in git repository
+    new Installer({ homeDir: tempHome, workspaceRoot: tempWorkspace, scope: "local", platform: "antigravity" }).execute();
+
+    // 2. Copy root .gitignore to tempWorkspace so git honors project rules
+    const rootGitignore = fs.readFileSync(path.resolve(".gitignore"), "utf-8");
+    fs.writeFileSync(path.join(tempWorkspace, ".gitignore"), rootGitignore);
+
+    // 3. Simulate a crashed tmp file left behind in the workspace
+    const leftoverTmp = path.join(tempWorkspace, ".agents/agents/correctness-reviewer.md.tmp.1234.abcd");
+    fs.writeFileSync(leftoverTmp, "partial garbage content");
+
+    // 4. git status must ignore the .tmp. file
+    const gitStatus = execSync("git status --porcelain", { cwd: tempWorkspace, encoding: "utf-8" });
+    expect(gitStatus).not.toContain(".tmp.");
+  });
+
+  it("should purge stale .tmp files older than 1 hour during writeAtomic and upon uninstall (Issue 1)", () => {
+    // 1. Initial installation
+    new Installer({ homeDir: tempHome, platform: "claude-code" }).execute();
+    const skillPath = path.join(tempHome, ".claude/skills/code-review/SKILL.md");
+    const parentDir = path.dirname(skillPath);
+
+    // 2. Simulate a crashed stale .tmp file (mtime 2 hours ago)
+    const staleTmp = path.join(parentDir, "SKILL.md.tmp.1111.aaaa");
+    fs.writeFileSync(staleTmp, "stale content");
+    const twoHoursAgo = (Date.now() - 7200_000) / 1000;
+    fs.utimesSync(staleTmp, twoHoursAgo, twoHoursAgo);
+
+    // Simulate a fresh .tmp file (mtime right now, should not be deleted by writeAtomic)
+    const freshTmp = path.join(parentDir, "SKILL.md.tmp.2222.bbbb");
+    fs.writeFileSync(freshTmp, "fresh content");
+
+    // 3. Next writeAtomic call should purge staleTmp but keep freshTmp
+    Installer.writeAtomic(skillPath, "# Updated Skill");
+    expect(fs.existsSync(staleTmp)).toBe(false);
+    expect(fs.existsSync(freshTmp)).toBe(true);
+
+    // 4. Uninstall with force should clean up all remaining .tmp files for managed entries
+    const unResult = new Uninstaller({ homeDir: tempHome, force: true }).execute();
+    expect(unResult.success).toBe(true);
+    expect(fs.existsSync(freshTmp)).toBe(false);
+  });
+
   it("should never modify an existing .codex/config.toml", () => {
     // 用户的 Codex 配置可能包含模型、provider、MCP 等内容，任何写入都不可接受
     const codexDir = path.join(tempHome, ".codex");

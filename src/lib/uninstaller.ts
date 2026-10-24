@@ -143,6 +143,16 @@ export class Uninstaller {
           if (!this.dryRun) {
             resolveManagedPath(baseDir, entry.path);
             fs.unlinkSync(fullPath);
+            // 清理同目录下遗留的该受管文件 .tmp.* 孤儿文件，防止阻碍父目录空目录清理
+            try {
+              const parentDir = path.dirname(fullPath);
+              const baseName = path.basename(fullPath);
+              for (const file of fs.readdirSync(parentDir)) {
+                if (file.startsWith(`${baseName}.tmp.`)) {
+                  try { fs.unlinkSync(path.join(parentDir, file)); } catch {}
+                }
+              }
+            } catch {}
           }
           removedFiles.push(entry.path);
           if (!this.dryRun) this.cleanEmptyParentDirs(fullPath, baseDir);

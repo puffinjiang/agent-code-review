@@ -226,6 +226,80 @@ describe("ProcessLock Unit Tests", () => {
     expect(fs.existsSync(lockPath)).toBe(false);
   });
 
+  it("should report exact EACCES error and remediation guidance when lock file is unreadable (mode 000) (O-3)", () => {
+    // Windows permissions do not support POSIX mode 000
+    if (process.platform === "win32") return;
+
+    const lockPath = ProcessLock.getLockPath(tempDir);
+    fs.writeFileSync(lockPath, JSON.stringify({ pid: process.pid, token: "secret", time: Date.now() }), "utf-8");
+    fs.chmodSync(lockPath, 0o000);
+
+    try {
+      try {
+        ProcessLock.acquire(tempDir, { timeoutMs: 200 });
+        expect.unreachable("should have thrown");
+      } catch (err: unknown) {
+        expect((err as NodeJS.ErrnoException).code).toBe("EACCES");
+        expect((err as Error).message).toMatch(/无法读取安装锁文件（权限不足\/EACCES）/);
+        expect((err as Error).message).toMatch(/rm/);
+      }
+    } finally {
+      try { fs.chmodSync(lockPath, 0o644); } catch {}
+    }
+  });
+
+  it("should safely restore lock without deleting it if token changed during CAS reclaim (O-2)", () => {
+    const lockPath = ProcessLock.getLockPath(tempDir);
+    const dataNew = { pid: 99999, token: "new-holder-token", time: Date.now() };
+    fs.writeFileSync(lockPath, JSON.stringify(dataNew), "utf-8");
+
+    // Reclaim expecting "old-token" -> mismatch -> must restore dataNew
+    (ProcessLock as unknown as { reclaim: (p: string, t: string | null) => void }).reclaim(lockPath, "old-token");
+
+    expect(fs.existsSync(lockPath)).toBe(true);
+    const content = JSON.parse(fs.readFileSync(lockPath, "utf-8"));
+    expect(content.token).toBe("new-holder-token");
+
+    // Reclaim expecting matching token -> must safely unlink
+    (ProcessLock as unknown as { reclaim: (p: string, t: string | null) => void }).reclaim(lockPath, "new-holder-token");
+    expect(fs.existsSync(lockPath)).toBe(false);
+  });
+
+  it("should never delete foreign non-empty file when reclaim is invoked with null (V-6)", () => {
+    const lockPath = ProcessLock.getLockPath(tempDir);
+    fs.writeFileSync(lockPath, "user foreign file content", "utf-8");
+
+    // reclaim expecting null (0-byte) must check size === 0 and refuse to unlink foreign non-empty file
+    (ProcessLock as unknown as { reclaim: (p: string, t: string | null) => void }).reclaim(lockPath, null);
+
+    expect(fs.existsSync(lockPath)).toBe(true);
+    expect(fs.readFileSync(lockPath, "utf-8")).toBe("user foreign file content");
+  });
+
+  it("should safely reclaim 0-byte file when reclaim is invoked with null (V-6)", () => {
+    const lockPath = ProcessLock.getLockPath(tempDir);
+    fs.writeFileSync(lockPath, "", "utf-8");
+    expect(fs.statSync(lockPath).size).toBe(0);
+
+    (ProcessLock as unknown as { reclaim: (p: string, t: string | null) => void }).reclaim(lockPath, null);
+    expect(fs.existsSync(lockPath)).toBe(false);
+  });
+
+  it("should preserve timeout error message when lock file becomes unreadable at timeout (C-2)", () => {
+    // Windows permissions do not support POSIX mode 000
+    if (process.platform === "win32") return;
+
+    const lockPath = ProcessLock.getLockPath(tempDir);
+    // Live lock from current PID so acquire won't reclaim it as dead
+    fs.writeFileSync(lockPath, JSON.stringify({ pid: process.pid, token: "other", time: Date.now() }), "utf-8");
+
+    try {
+      expect(() => ProcessLock.acquire(tempDir, { timeoutMs: 100, retryIntervalMs: 20 })).toThrow(/获取安装锁超时/);
+    } finally {
+      try { fs.unlinkSync(lockPath); } catch {}
+    }
+  });
+
   it.skipIf(!canSymlink)("should refuse live and dangling symlinks at lock path immediately and return structured error in Installer/Uninstaller (D-14)", () => {
     const lockPath = ProcessLock.getLockPath(tempDir);
     const externalTarget = path.join(tempDir, "external.txt");

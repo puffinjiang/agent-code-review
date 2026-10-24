@@ -9,7 +9,6 @@ export interface InitCommandOptions {
   local?: boolean;
   dryRun?: boolean;
   force?: boolean;
-  yes?: boolean;
   homeDir?: string;
   workspaceRoot?: string;
 }

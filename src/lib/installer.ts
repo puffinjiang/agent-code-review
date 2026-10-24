@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import * as crypto from "node:crypto";
 import { ManifestManager, InstallationManifest, ManifestFileEntry } from "./manifest.js";
 import { SupportedPlatform, getAdapter, TemplateFile } from "../../adapters/index.js";
 import { ProcessLock } from "./lock.js";
@@ -61,6 +62,54 @@ export class Installer {
     this.dryRun = !!options.dryRun;
     this.force = !!options.force;
     this.templateDir = options.templateDir;
+  }
+
+  /**
+   * N-1 / N-3: 原子替换写入。
+   * 1. 先写入同目录随机临时文件，随后以原子 renameSync 替换，杜绝半截文件与截断风险；
+   * 2. 若目标文件已存在，保留其原有 mode（文件权限，如 chmod 600），防止静默重置；
+   * 3. 失败时自动清理临时文件。
+   */
+  public static writeAtomic(fullPath: string, content: string): void {
+    const parentDir = path.dirname(fullPath);
+    if (!fs.existsSync(parentDir)) {
+      fs.mkdirSync(parentDir, { recursive: true });
+    }
+
+    // 自动清理同目录下遗留的陈旧 .tmp. 文件（mtime > 1 小时，防止崩溃残留累积）
+    try {
+      const baseName = path.basename(fullPath);
+      for (const file of fs.readdirSync(parentDir)) {
+        if (file.startsWith(`${baseName}.tmp.`)) {
+          const tmpFilePath = path.join(parentDir, file);
+          try {
+            const stat = fs.statSync(tmpFilePath);
+            if (Date.now() - stat.mtimeMs > 3600_000) {
+              fs.unlinkSync(tmpFilePath);
+            }
+          } catch {}
+        }
+      }
+    } catch {}
+
+    let existingMode: number | null = null;
+    try {
+      existingMode = fs.statSync(fullPath).mode;
+    } catch {}
+
+    const tmpPath = `${fullPath}.tmp.${process.pid}.${crypto.randomBytes(4).toString("hex")}`;
+    try {
+      fs.writeFileSync(tmpPath, content, "utf-8");
+      if (existingMode !== null) {
+        try {
+          fs.chmodSync(tmpPath, existingMode & 0o7777);
+        } catch {}
+      }
+      fs.renameSync(tmpPath, fullPath);
+    } catch (writeErr) {
+      try { fs.unlinkSync(tmpPath); } catch {}
+      throw writeErr;
+    }
   }
 
   public getBaseDir(): string {
@@ -377,7 +426,7 @@ export class Installer {
               newlyCreatedPaths.push(fullPath);
             }
 
-            fs.writeFileSync(fullPath, item.sourceContent, "utf-8");
+            Installer.writeAtomic(fullPath, item.sourceContent);
           }
 
           manifestFilesMap.set(item.relativePath, {
@@ -423,10 +472,10 @@ export class Installer {
             // best effort cleanup
           }
         }
-        // 恢复被更新文件的原始内容
+        // 恢复被更新文件的原始内容（走原子写入，防止回滚中断引发截断损坏）
         for (const [updatedPath, originalContent] of previousFileContents.entries()) {
           try {
-            fs.writeFileSync(updatedPath, originalContent, "utf-8");
+            Installer.writeAtomic(updatedPath, originalContent);
           } catch {
             // best effort restore
           }

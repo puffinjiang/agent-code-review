@@ -16,12 +16,12 @@ const reviewers = "(?:correctness|security|concurrency|performance)-reviewer|fin
 export const LEGACY_SHARED_CONFIG = ".codex/config.toml";
 
 const managedPaths = [
-  /^\.agent-code-review\.json$/,
-  /^\.(?:agents|claude)\/skills\/code-review\/SKILL\.md$/,
-  /^\.gemini\/(?:config|antigravity-cli)\/skills\/code-review\/SKILL\.md$/,
-  new RegExp(`^\\.claude/agents/(?:${reviewers})\\.md$`),
-  new RegExp(`^\\.codex/agents/(?:${reviewers})\\.toml$`),
-  new RegExp(`^\\.(?:agents|gemini/config)/agents/(?:${reviewers})/agent\\.md$`),
+  /^\.agent-code-review\.json(?:\.tmp\.[^/]+)?$/,
+  /^\.(?:agents|claude)\/skills\/code-review\/SKILL\.md(?:\.tmp\.[^/]+)?$/,
+  /^\.gemini\/(?:config|antigravity-cli)\/skills\/code-review\/SKILL\.md(?:\.tmp\.[^/]+)?$/,
+  new RegExp(`^\\.claude/agents/(?:${reviewers})\\.md(?:\\.tmp\\.[^/]+)?$`),
+  new RegExp(`^\\.codex/agents/(?:${reviewers})\\.toml(?:\\.tmp\\.[^/]+)?$`),
+  new RegExp(`^\\.(?:agents|gemini/config)/agents/(?:${reviewers})/agent\\.md(?:\\.tmp\\.[^/]+)?$`),
   new RegExp(`^\\.codex\\/config\\.toml$`)
 ];
 
