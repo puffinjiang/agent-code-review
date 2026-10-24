@@ -5,6 +5,10 @@ import { fileURLToPath } from "node:url";
 let cachedVersion: string | null = null;
 
 export function getPackageVersion(): string {
+  if (typeof __PACKAGE_VERSION__ !== "undefined") {
+    return __PACKAGE_VERSION__;
+  }
+
   if (cachedVersion) return cachedVersion;
 
   try {
