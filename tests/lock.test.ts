@@ -93,11 +93,11 @@ describe("ProcessLock Unit Tests", () => {
     }
   });
 
-  it("should never steal a live process lock when PID and startEpoch match (V-1)", () => {
+  it("should never steal a live process lock held by an active process within maxAgeMs (V-1)", () => {
     const releaseA = ProcessLock.acquire(tempDir);
     try {
       // Process B attempts to acquire with short timeout
-      // Since Process A is alive and startEpoch matches, B must NOT steal A's active lock
+      // Since Process A is alive, B must NOT steal A's active lock
       expect(() =>
         ProcessLock.acquire(tempDir, { timeoutMs: 150, retryIntervalMs: 25 })
       ).toThrow(/获取安装锁超时/);
@@ -106,55 +106,20 @@ describe("ProcessLock Unit Tests", () => {
     }
   });
 
-  it("should immediately break abandoned lock when PID was recycled (e.g. PID 1 with mismatched startEpoch)", () => {
+  it("should immediately break abandoned lock when age exceeds stale threshold (even if PID is alive, e.g. recycled PID 1)", () => {
     const lockPath = ProcessLock.getLockPath(tempDir);
-    // Simulate a crashed process whose PID was recycled to PID 1 (which is always alive)
-    // The lock recorded startEpoch as 60 seconds ago, whereas PID 1 started at system boot (hours/days ago)
+    // Simulate an abandoned lock whose PID is 1 (always alive) but created 60s ago
     fs.writeFileSync(
       lockPath,
-      JSON.stringify({ pid: 1, token: "reused-pid-token", time: Date.now() - 60000, startEpoch: Date.now() - 60000 }),
+      JSON.stringify({ pid: 1, token: "reused-pid-token", time: Date.now() - 60000 }),
       "utf-8"
     );
+    const oldTime = new Date(Date.now() - 60000);
+    fs.utimesSync(lockPath, oldTime, oldTime);
 
-    // Contender should immediately detect startEpoch mismatch (> 2500ms) and break the abandoned lock
+    // Contender detects age > 15000ms and breaks the abandoned lock immediately
     const release = ProcessLock.acquire(tempDir, { timeoutMs: 500 });
     expect(fs.existsSync(lockPath)).toBe(true);
-    release();
-    expect(fs.existsSync(lockPath)).toBe(false);
-  });
-
-  it("should conservatively respect legacy lock without startEpoch when PID is alive and not break it (BUG-1)", () => {
-    const lockPath = ProcessLock.getLockPath(tempDir);
-    // Legacy lock format with alive PID (e.g. current process) but missing startEpoch
-    fs.writeFileSync(
-      lockPath,
-      JSON.stringify({ pid: process.pid, token: "legacy-live-token", time: Date.now() - 10000 }),
-      "utf-8"
-    );
-
-    // Contender must respect the lock and NOT break/steal it
-    expect(() =>
-      ProcessLock.acquire(tempDir, { timeoutMs: 150, retryIntervalMs: 25 })
-    ).toThrow(/获取安装锁超时/);
-
-    expect(fs.existsSync(lockPath)).toBe(true);
-    const lockData = JSON.parse(fs.readFileSync(lockPath, "utf-8"));
-    expect(lockData.token).toBe("legacy-live-token");
-  });
-
-  it("should break legacy lock without startEpoch when PID is dead (BUG-1)", () => {
-    const lockPath = ProcessLock.getLockPath(tempDir);
-    // Legacy lock format with dead PID
-    fs.writeFileSync(
-      lockPath,
-      JSON.stringify({ pid: 999999999, token: "legacy-dead-token", time: Date.now() - 10000 }),
-      "utf-8"
-    );
-
-    const release = ProcessLock.acquire(tempDir, { timeoutMs: 500 });
-    expect(fs.existsSync(lockPath)).toBe(true);
-    const lockData = JSON.parse(fs.readFileSync(lockPath, "utf-8"));
-    expect(lockData.token).not.toBe("legacy-dead-token");
     release();
     expect(fs.existsSync(lockPath)).toBe(false);
   });
@@ -198,8 +163,7 @@ describe("ProcessLock Unit Tests", () => {
     expect(tokenB).not.toBe(tokenA);
 
     // 3. Stale holder A attempts to invoke release() with tokenA
-    // With V-2 atomic release, it must NOT delete Process B's active lock
-    // @ts-expect-error accessing private release for unit testing TOCTOU safety
+    // It must NOT delete Process B's active lock because tokens do not match
     ProcessLock.release(lockPath, tokenA);
 
     expect(fs.existsSync(lockPath)).toBe(true);
@@ -260,80 +224,6 @@ describe("ProcessLock Unit Tests", () => {
     expect(fs.statSync(lockPath).size).toBeGreaterThan(0);
     release();
     expect(fs.existsSync(lockPath)).toBe(false);
-  });
-
-  it("should never overwrite a third-party lock when restoring a mistakenly moved lock (F-2)", () => {
-    const lockPath = ProcessLock.getLockPath(tempDir);
-    const tokenC = "token-holder-c";
-    // 1. Process C acquires the lock at lockPath
-    fs.writeFileSync(
-      lockPath,
-      JSON.stringify({ pid: process.pid, token: tokenC, time: Date.now(), startEpoch: Date.now() }),
-      "utf-8"
-    );
-
-    // 2. Simulate trashPath containing an erroneously moved lock B
-    const trashPath = `${lockPath}.stale.test`;
-    fs.writeFileSync(
-      trashPath,
-      JSON.stringify({ pid: process.pid, token: "token-b", time: Date.now(), startEpoch: Date.now() }),
-      "utf-8"
-    );
-
-    // 3. Invoke restoreMovedLock: because lockPath is occupied by Process C, linkSync throws EEXIST
-    // and restoreMovedLock MUST NOT overwrite Process C's lock file
-    // @ts-expect-error private method test
-    ProcessLock.restoreMovedLock(trashPath, lockPath);
-
-    expect(fs.existsSync(lockPath)).toBe(true);
-    const currentLock = JSON.parse(fs.readFileSync(lockPath, "utf-8"));
-    expect(currentLock.token).toBe(tokenC); // Process C's lock is completely intact!
-    expect(fs.existsSync(trashPath)).toBe(true); // trashPath preserved
-    fs.unlinkSync(trashPath);
-  });
-
-  it("should log warning to stderr when restoreMovedLock encounters unexpected error", () => {
-    const lockPath = ProcessLock.getLockPath(tempDir);
-    const nonExistentTrash = path.join(tempDir, "non-existent-trash.lock");
-
-    const stderrSpy: string[] = [];
-    const origWrite = process.stderr.write.bind(process.stderr);
-    process.stderr.write = ((chunk: string | Uint8Array) => {
-      stderrSpy.push(String(chunk));
-      return true;
-    }) as any;
-
-    try {
-      // @ts-expect-error private method test
-      ProcessLock.restoreMovedLock(nonExistentTrash, lockPath);
-      expect(stderrSpy.some((s) => s.includes("警告: 还原锁文件异常 (ENOENT)"))).toBe(true);
-    } finally {
-      process.stderr.write = origWrite;
-    }
-  });
-
-  it("should re-verify startEpoch after 1000ms throttled window during contention", () => {
-    let getStartTimeCalls = 0;
-    const origGetStartTime = ProcessLock.getProcessStartTime.bind(ProcessLock);
-    ProcessLock.getProcessStartTime = (pid: number) => {
-      getStartTimeCalls++;
-      return origGetStartTime(pid);
-    };
-
-    const releaseA = ProcessLock.acquire(tempDir);
-    try {
-      // Waiting 1150ms should trigger initial check (1) + throttled check after 1000ms (1) = 2 calls
-      // without re-running ps every 50ms (which would have been ~23 calls)
-      expect(() =>
-        ProcessLock.acquire(tempDir, { timeoutMs: 1150, retryIntervalMs: 50 })
-      ).toThrow(/获取安装锁超时/);
-
-      expect(getStartTimeCalls).toBeGreaterThanOrEqual(2);
-      expect(getStartTimeCalls).toBeLessThanOrEqual(4);
-    } finally {
-      ProcessLock.getProcessStartTime = origGetStartTime;
-      releaseA();
-    }
   });
 
   it.skipIf(!canSymlink)("should refuse live and dangling symlinks at lock path immediately and return structured error in Installer/Uninstaller (D-14)", () => {
