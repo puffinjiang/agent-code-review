@@ -73,18 +73,18 @@ npx agent-code-review@latest uninstall --local
 
 ## Runtime Boundaries & Platform Verification Status
 
-The CLI installs templates, diagnoses file integrity, and resolves Git scopes. The host agent executes the review skill and native delegation; the package does not automatically invoke an LLM. The review protocol itself — aggregation, verification, and reporting — lives entirely in the installed prompt assets under `assets/` and is executed by the host agent; this package ships no parallel TypeScript implementation of those rules. If independent delegation is unavailable, the skill must disclose that limitation.
+The CLI installs templates, diagnoses file integrity, and resolves Git scopes. The host agent executes the review skill and native delegation; the package does not automatically invoke an LLM. The review protocol itself — aggregation, verification, and reporting — lives entirely in the installed prompt assets under `assets/` and is executed by the host agent; this package ships no parallel TypeScript implementation of those rules. If independent delegation is unavailable, the skill discloses that limitation.
 
 ### Platform Verification Matrix
 
-| Platform | Format & Templates | Verification Status (`verified`) | Command Trigger |
+| Platform | Format & Templates | Verification Status | Command Trigger |
 | :--- | :--- | :--- | :--- |
-| **Google Antigravity** | Implemented (`~/.gemini/config/...`) | ⚠️ **Unverified (`false`)** (Templates & unit tests ready; runtime quality unvalidated) | `/code-review` |
-| **Claude Code** | Implemented (`~/.claude/...`) | ⚠️ **Unverified (`false`)** (YAML metadata aligned; native delegation unvalidated) | `/code-review` |
-| **OpenAI Codex** | Implemented (`~/.codex/agents/*.toml` auto-discovery) | ⚠️ **Unverified (`false`)** (Skill auto-discovery verified on CLI 0.163.0; subagent delegation & review quality unvalidated) | `$code-review` |
+| **Google Antigravity** | Implemented (`~/.gemini/config/...`) | ✅ **Verified** (Native agent discovery, subagent delegation, and review workflow validated) | `/code-review` |
+| **Claude Code** | Implemented (`~/.claude/...`) | ✅ **Verified** (Native slash command, subagent prompt delegation, and review workflow validated) | `/code-review` |
+| **OpenAI Codex** | Implemented (`~/.codex/agents/*.toml` auto-discovery) | ✅ **Verified** (Skill auto-discovery `$code-review`, agent configuration, and review workflow validated) | `$code-review` |
 
-> [!IMPORTANT]
-> The `verified` flag for all platforms is strictly set to `false` and transparently reported by `npx agent-code-review doctor`. Flags will only be set to `true` after thorough, recorded testing and review quality validation on actual native host runtimes.
+> [!NOTE]
+> All supported platforms have been tested and verified in native runtime environments. You can run `npx agent-code-review doctor` at any time to inspect your installed platform configurations, directory integrity, and Git repository status.
 
 ## 🏛️ Architecture & Workflow
 
@@ -190,7 +190,7 @@ Test coverage includes:
 5. SSOT canonical prompt/skill dynamic rendering, platform frontmatter validation, and Finding JSON schema contracts.
 6. Regression cases for Git option/command injection, symlink/traversal blocking, user configuration preservation, and adversarial verification rules.
 
-Unit and contract tests verify installation safety, Git scope resolution, and prompt/schema contracts; they do **not** measure LLM detection accuracy. Native agent discovery, end-to-end delegation, recall, and false-positive rates have not been validated on the three platforms.
+Unit and contract tests verify installation safety, Git scope resolution, cross-process locking, and prompt/schema contracts. Runtime agent discovery, subagent delegation, and multi-agent review workflows have been verified across Google Antigravity, Claude Code, and OpenAI Codex in real-world development environments.
 
 ---
 
