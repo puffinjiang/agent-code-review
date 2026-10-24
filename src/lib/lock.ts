@@ -12,9 +12,8 @@ export interface LockOptions {
 
 interface LockData {
   pid: number;
-  /** 旧格式或手工写入的锁文件可能缺少 token */
-  token?: string;
-  time?: number;
+  token: string;
+  time: number;
 }
 
 /**
@@ -50,10 +49,24 @@ export class ProcessLock {
     return `${lockPath}.${kind}.${process.pid}.${crypto.randomBytes(8).toString("hex")}`;
   }
 
+  /**
+   * V-6 完整修复：严格校验 ACR 锁格式。
+   * 本工具自身创建的锁必定包含数字 pid、UUID 字符串 token 以及数字 time。
+   * 任何缺少这些字段的 JSON（例如用户的自定义配置或仅含 pid 的外来数据）均视为非锁文件，防止被误判为孤立锁删除。
+   */
   private static readLock(filePath: string): LockData | null {
     try {
       const data = JSON.parse(fs.readFileSync(filePath, "utf-8"));
-      if (data && typeof data.pid === "number") return data as LockData;
+      if (
+        data &&
+        typeof data === "object" &&
+        typeof data.pid === "number" &&
+        typeof data.token === "string" &&
+        data.token.length > 0 &&
+        typeof data.time === "number"
+      ) {
+        return data as LockData;
+      }
       return null;
     } catch {
       return null;
@@ -122,9 +135,9 @@ export class ProcessLock {
 
   /**
    * 原子地打破一个被判定为过期的锁。
-   * expectedToken 为判定时读到的 token（损坏的锁文件为 null）。
+   * expectedToken 为判定时读到的 token。
    */
-  private static breakStale(lockPath: string, expectedToken: string | null): void {
+  private static breakStale(lockPath: string, expectedToken: string): void {
     const trashPath = this.uniqueSibling(lockPath, "stale");
     try {
       fs.renameSync(lockPath, trashPath);
@@ -137,7 +150,12 @@ export class ProcessLock {
     const movedToken = moved?.token ?? null;
     if (movedToken !== expectedToken) {
       // 判定与 rename 之间锁已被他人替换：我们误移了一个新的活锁，尽力恢复
-      try { fs.linkSync(trashPath, lockPath); } catch { /* 已有更新的锁，放弃恢复 */ }
+      try {
+        fs.renameSync(trashPath, lockPath);
+      } catch {
+        // V-3 修复：原处已有新锁占用，保留 trashPath 绝不强行 unlink 他人的有效锁
+        return;
+      }
     }
     try { fs.unlinkSync(trashPath); } catch { /* ignore */ }
   }
@@ -162,21 +180,44 @@ export class ProcessLock {
       this.lstatNoSymlink(lockPath);
 
       if (this.tryCreate(lockPath, { pid: process.pid, token, time: Date.now() })) {
-        return () => this.release(lockPath, token);
+        // 启动心跳刷新锁 mtime，确保当前存活进程持锁期间 age 绝不超期 (V-1 & V-2)
+        const heartbeatInterval = Math.max(50, Math.min(1000, Math.floor(staleMs / 3)));
+        const timer = setInterval(() => {
+          try {
+            const current = this.readLock(lockPath);
+            if (current && current.token === token) {
+              const now = new Date();
+              fs.utimesSync(lockPath, now, now);
+            }
+          } catch {
+            // ignore
+          }
+        }, heartbeatInterval);
+        if (timer.unref) timer.unref();
+
+        return () => {
+          clearInterval(timer);
+          this.release(lockPath, token);
+        };
       }
 
       // 锁已存在：判断是否过期
       const stat = this.lstatNoSymlink(lockPath);
       if (stat) {
         const data = this.readLock(lockPath);
-        if (data && typeof data.pid === "number") {
-          // V-1 修复：只要持锁者 PID 依然存活，绝不能仅凭 age 过期破锁（防止活锁被抢占导致并发写入冲突）
-          if (!this.isPidAlive(data.pid)) {
-            // 持有者进程已死亡，确认为孤立死锁，安全破锁
-            this.breakStale(lockPath, data.token ?? null);
+        if (data) {
+          const age = Date.now() - stat.mtimeMs;
+          const isAlive = this.isPidAlive(data.pid);
+          // 破锁条件：
+          // 1. 持锁进程已死亡（!isAlive）：属于孤立崩溃残留，立即破锁；
+          // 2. 或 age > staleMs：即使持锁 pid 似乎存活（如 pid 被系统复用给了 pid 1 或无关进程），
+          //    但由于心跳早已中断（age 超过设定过期时间），证明原任务早已退出或废弃，作为兜底破锁。
+          const isStale = !isAlive || age > staleMs;
+          if (isStale) {
+            this.breakStale(lockPath, data.token);
             continue;
           }
-          // 持有者进程仍然存活：互斥生效，等待持有者释放
+          // 否则：持锁进程存活且心跳正常（age <= staleMs），为有效活锁，等待释放
         } else {
           // V-6 修复：非 ACR 锁结构的文件（外来文件或用户自定义文件），绝不能判定为 stale 并无条件删除
           // 若文件刚被创建（age <= 500ms），可能处于原子写入的极短过渡期，给予重试机会；
@@ -223,11 +264,11 @@ export class ProcessLock {
         try {
           fs.renameSync(trashPath, lockPath);
         } catch {
-          try { fs.unlinkSync(trashPath); } catch { /* ignore */ }
+          // V-3 修复：恢复失败（原处已有新锁），保留 trashPath 绝不强行删除他人有效锁
         }
       }
     } catch {
-      try { fs.unlinkSync(trashPath); } catch { /* ignore */ }
+      // 保护性捕获：绝不误删未核验 token 的文件
     }
   }
 

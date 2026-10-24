@@ -71,7 +71,7 @@ describe("ProcessLock Unit Tests", () => {
     const lockPath = ProcessLock.getLockPath(tempDir);
     fs.writeFileSync(
       lockPath,
-      JSON.stringify({ pid: 999999999, time: Date.now() - 5000 }),
+      JSON.stringify({ pid: 999999999, token: "dead-pid-token", time: Date.now() - 5000 }),
       "utf-8"
     );
     expect(fs.existsSync(lockPath)).toBe(true);
@@ -93,26 +93,39 @@ describe("ProcessLock Unit Tests", () => {
     }
   });
 
-  it("should never break lock if holder PID is alive, even if age exceeds staleMs (V-1)", () => {
-    const lockPath = ProcessLock.getLockPath(tempDir);
-    // Process A (current live process) acquires lock
-    const releaseA = ProcessLock.acquire(tempDir);
+  it("should keep live process lock active via heartbeat without being stolen by age (V-1)", async () => {
+    // Process A holds lock with short staleMs (300ms)
+    const releaseA = ProcessLock.acquire(tempDir, { staleMs: 300 });
     try {
-      // Backdate lock mtime by 60 seconds
-      const oldTime = new Date(Date.now() - 60000);
-      fs.utimesSync(lockPath, oldTime, oldTime);
+      // Wait 400ms: with heartbeat, Process A continuously refreshes mtime
+      await new Promise((resolve) => setTimeout(resolve, 400));
 
-      // Process B attempts to acquire with staleMs = 1000, timeoutMs = 200
-      // Since PID is alive, B must NOT steal A's active lock
+      // Process B tries to acquire: Process A is alive and heartbeat is ticking, so B must time out
       expect(() =>
-        ProcessLock.acquire(tempDir, { staleMs: 1000, timeoutMs: 200, retryIntervalMs: 25 })
+        ProcessLock.acquire(tempDir, { staleMs: 300, timeoutMs: 150, retryIntervalMs: 25 })
       ).toThrow(/Failed to acquire lock/);
-
-      // The original lock held by A must still be intact
-      expect(fs.existsSync(lockPath)).toBe(true);
     } finally {
       releaseA();
     }
+  });
+
+  it("should break abandoned lock when heartbeat stops and age exceeds staleMs, even if PID was recycled (e.g. PID 1)", () => {
+    const lockPath = ProcessLock.getLockPath(tempDir);
+    // Simulate a crashed process whose PID was recycled to PID 1 (which is always alive)
+    // No heartbeat is running, so mtime is 60 seconds old
+    fs.writeFileSync(
+      lockPath,
+      JSON.stringify({ pid: 1, token: "reused-pid-token", time: Date.now() - 60000 }),
+      "utf-8"
+    );
+    const oldTime = new Date(Date.now() - 60000);
+    fs.utimesSync(lockPath, oldTime, oldTime);
+
+    // Contender with staleMs = 1000 should break this abandoned lock via staleMs fallback
+    const release = ProcessLock.acquire(tempDir, { staleMs: 1000, timeoutMs: 500 });
+    expect(fs.existsSync(lockPath)).toBe(true);
+    release();
+    expect(fs.existsSync(lockPath)).toBe(false);
   });
 
   it("should not delete another holder's lock when an expired holder calls release() (V-2 TOCTOU)", () => {
@@ -145,19 +158,29 @@ describe("ProcessLock Unit Tests", () => {
 
   it("should refuse and never delete foreign non-ACR file placed at lockPath (V-6)", () => {
     const lockPath = ProcessLock.getLockPath(tempDir);
+
+    // 1. Plain text foreign file
     const foreignContent = "user custom data or git tracked lock content";
     fs.writeFileSync(lockPath, foreignContent, "utf-8");
-    // Backdate by 2 seconds so it's not considered mid-write
     const oldTime = new Date(Date.now() - 2000);
     fs.utimesSync(lockPath, oldTime, oldTime);
 
     expect(() =>
       ProcessLock.acquire(tempDir, { timeoutMs: 200, retryIntervalMs: 25 })
     ).toThrow(/contains an invalid or foreign file\. Refusing to overwrite/);
-
-    // User's foreign file MUST NOT be deleted
     expect(fs.existsSync(lockPath)).toBe(true);
     expect(fs.readFileSync(lockPath, "utf-8")).toBe(foreignContent);
+
+    // 2. Foreign JSON file containing a numeric pid but no ACR token/time
+    const foreignJson = JSON.stringify({ pid: 999999999, userdata: "IMPORTANT" });
+    fs.writeFileSync(lockPath, foreignJson, "utf-8");
+    fs.utimesSync(lockPath, oldTime, oldTime);
+
+    expect(() =>
+      ProcessLock.acquire(tempDir, { timeoutMs: 200, retryIntervalMs: 25 })
+    ).toThrow(/contains an invalid or foreign file\. Refusing to overwrite/);
+    expect(fs.existsSync(lockPath)).toBe(true);
+    expect(fs.readFileSync(lockPath, "utf-8")).toBe(foreignJson);
   });
 
   it.skipIf(!canSymlink)("should refuse live and dangling symlinks at lock path immediately and return structured error in Installer/Uninstaller (D-14)", () => {
