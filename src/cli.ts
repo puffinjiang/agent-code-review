@@ -3,13 +3,14 @@ import { runDoctor } from "./commands/doctor.js";
 import { runInit } from "./commands/init.js";
 import { runScope } from "./commands/scope.js";
 import { runUninstall } from "./commands/uninstall.js";
+import { getPackageVersion } from "./lib/version.js";
 
 const program = new Command();
 
 program
   .name("agent-code-review")
   .description("Multi-agent code review framework for AI coding agents (Global First)")
-  .version("0.1.0");
+  .version(getPackageVersion());
 
 program
   .command("init")
