@@ -1,9 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
-import * as path from "node:path";
 import * as os from "node:os";
-import { ProcessLock } from "../src/lib/lock.js";
+import * as path from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Installer } from "../src/lib/installer.js";
+import { ProcessLock } from "../src/lib/lock.js";
 import { Uninstaller } from "../src/lib/uninstaller.js";
 
 function symlinksAvailable(): boolean {
@@ -71,7 +71,7 @@ describe("ProcessLock Unit Tests", () => {
     fs.writeFileSync(
       lockPath,
       JSON.stringify({ pid: 999999999, token: "dead-pid-token", time: Date.now() - 5000 }),
-      "utf-8"
+      "utf-8",
     );
     expect(fs.existsSync(lockPath)).toBe(true);
 
@@ -86,9 +86,9 @@ describe("ProcessLock Unit Tests", () => {
     const releaseA = ProcessLock.acquire(tempDir);
     try {
       const before = fs.readFileSync(lockPath, "utf-8");
-      expect(() =>
-        ProcessLock.acquire(tempDir, { timeoutMs: 150, retryIntervalMs: 25 })
-      ).toThrow(/获取安装锁超时/);
+      expect(() => ProcessLock.acquire(tempDir, { timeoutMs: 150, retryIntervalMs: 25 })).toThrow(
+        /获取安装锁超时/,
+      );
       expect(fs.readFileSync(lockPath, "utf-8")).toBe(before);
     } finally {
       releaseA();
@@ -101,7 +101,7 @@ describe("ProcessLock Unit Tests", () => {
     fs.writeFileSync(
       lockPath,
       JSON.stringify({ pid: 1, token: "reused-pid-token", time: Date.now() - 60000 }),
-      "utf-8"
+      "utf-8",
     );
     const oldTime = new Date(Date.now() - 60000);
     fs.utimesSync(lockPath, oldTime, oldTime);
@@ -123,11 +123,13 @@ describe("ProcessLock Unit Tests", () => {
     }) as any;
 
     try {
-      expect(() =>
-        ProcessLock.acquire(tempDir, { timeoutMs: 400, retryIntervalMs: 50 })
-      ).toThrow(/获取安装锁超时/);
+      expect(() => ProcessLock.acquire(tempDir, { timeoutMs: 400, retryIntervalMs: 50 })).toThrow(
+        /获取安装锁超时/,
+      );
 
-      expect(stderrSpy.some((s) => s.includes("⏳ 检测到另一个 agent-code-review 正在运行"))).toBe(true);
+      expect(stderrSpy.some((s) => s.includes("⏳ 检测到另一个 agent-code-review 正在运行"))).toBe(
+        true,
+      );
       expect(stderrSpy.some((s) => s.includes("锁路径:"))).toBe(true);
     } finally {
       process.stderr.write = originalWrite;
@@ -142,7 +144,7 @@ describe("ProcessLock Unit Tests", () => {
     fs.writeFileSync(
       lockPath,
       JSON.stringify({ pid: 999999999, token: tokenA, time: Date.now() - 5000 }),
-      "utf-8"
+      "utf-8",
     );
 
     // 2. Process B acquires the lock, breaking the dead lock and writing tokenB
@@ -171,9 +173,9 @@ describe("ProcessLock Unit Tests", () => {
     const oldTime = new Date(Date.now() - 2000);
     fs.utimesSync(lockPath, oldTime, oldTime);
 
-    expect(() =>
-      ProcessLock.acquire(tempDir, { timeoutMs: 200, retryIntervalMs: 25 })
-    ).toThrow(/contains an invalid or foreign file\. Refusing to overwrite/);
+    expect(() => ProcessLock.acquire(tempDir, { timeoutMs: 200, retryIntervalMs: 25 })).toThrow(
+      /contains an invalid or foreign file\. Refusing to overwrite/,
+    );
     expect(fs.existsSync(lockPath)).toBe(true);
     expect(fs.readFileSync(lockPath, "utf-8")).toBe(foreignContent);
 
@@ -182,20 +184,25 @@ describe("ProcessLock Unit Tests", () => {
     fs.writeFileSync(lockPath, foreignJson, "utf-8");
     fs.utimesSync(lockPath, oldTime, oldTime);
 
-    expect(() =>
-      ProcessLock.acquire(tempDir, { timeoutMs: 200, retryIntervalMs: 25 })
-    ).toThrow(/contains an invalid or foreign file\. Refusing to overwrite/);
+    expect(() => ProcessLock.acquire(tempDir, { timeoutMs: 200, retryIntervalMs: 25 })).toThrow(
+      /contains an invalid or foreign file\. Refusing to overwrite/,
+    );
     expect(fs.existsSync(lockPath)).toBe(true);
     expect(fs.readFileSync(lockPath, "utf-8")).toBe(foreignJson);
 
     // 3. Foreign JSON file with non-positive pid (pid: 0)
-    const foreignPidZero = JSON.stringify({ pid: 0, token: "non-positive-pid", time: Date.now() - 2000, data: "KEEP" });
+    const foreignPidZero = JSON.stringify({
+      pid: 0,
+      token: "non-positive-pid",
+      time: Date.now() - 2000,
+      data: "KEEP",
+    });
     fs.writeFileSync(lockPath, foreignPidZero, "utf-8");
     fs.utimesSync(lockPath, oldTime, oldTime);
 
-    expect(() =>
-      ProcessLock.acquire(tempDir, { timeoutMs: 200, retryIntervalMs: 25 })
-    ).toThrow(/contains an invalid or foreign file\. Refusing to overwrite/);
+    expect(() => ProcessLock.acquire(tempDir, { timeoutMs: 200, retryIntervalMs: 25 })).toThrow(
+      /contains an invalid or foreign file\. Refusing to overwrite/,
+    );
     expect(fs.existsSync(lockPath)).toBe(true);
     expect(fs.readFileSync(lockPath, "utf-8")).toBe(foreignPidZero);
   });
@@ -220,7 +227,11 @@ describe("ProcessLock Unit Tests", () => {
     if (process.platform === "win32") return;
 
     const lockPath = ProcessLock.getLockPath(tempDir);
-    fs.writeFileSync(lockPath, JSON.stringify({ pid: process.pid, token: "secret", time: Date.now() }), "utf-8");
+    fs.writeFileSync(
+      lockPath,
+      JSON.stringify({ pid: process.pid, token: "secret", time: Date.now() }),
+      "utf-8",
+    );
     fs.chmodSync(lockPath, 0o000);
 
     try {
@@ -233,7 +244,9 @@ describe("ProcessLock Unit Tests", () => {
         expect((err as Error).message).toMatch(/rm/);
       }
     } finally {
-      try { fs.chmodSync(lockPath, 0o644); } catch {}
+      try {
+        fs.chmodSync(lockPath, 0o644);
+      } catch {}
     }
   });
 
@@ -243,14 +256,20 @@ describe("ProcessLock Unit Tests", () => {
     fs.writeFileSync(lockPath, JSON.stringify(dataNew), "utf-8");
 
     // Reclaim expecting "old-token" -> mismatch -> must restore dataNew
-    (ProcessLock as unknown as { reclaim: (p: string, t: string | null) => void }).reclaim(lockPath, "old-token");
+    (ProcessLock as unknown as { reclaim: (p: string, t: string | null) => void }).reclaim(
+      lockPath,
+      "old-token",
+    );
 
     expect(fs.existsSync(lockPath)).toBe(true);
     const content = JSON.parse(fs.readFileSync(lockPath, "utf-8"));
     expect(content.token).toBe("new-holder-token");
 
     // Reclaim expecting matching token -> must safely unlink
-    (ProcessLock as unknown as { reclaim: (p: string, t: string | null) => void }).reclaim(lockPath, "new-holder-token");
+    (ProcessLock as unknown as { reclaim: (p: string, t: string | null) => void }).reclaim(
+      lockPath,
+      "new-holder-token",
+    );
     expect(fs.existsSync(lockPath)).toBe(false);
   });
 
@@ -259,7 +278,10 @@ describe("ProcessLock Unit Tests", () => {
     fs.writeFileSync(lockPath, "user foreign file content", "utf-8");
 
     // reclaim expecting null (0-byte) must check size === 0 and refuse to unlink foreign non-empty file
-    (ProcessLock as unknown as { reclaim: (p: string, t: string | null) => void }).reclaim(lockPath, null);
+    (ProcessLock as unknown as { reclaim: (p: string, t: string | null) => void }).reclaim(
+      lockPath,
+      null,
+    );
 
     expect(fs.existsSync(lockPath)).toBe(true);
     expect(fs.readFileSync(lockPath, "utf-8")).toBe("user foreign file content");
@@ -270,7 +292,10 @@ describe("ProcessLock Unit Tests", () => {
     fs.writeFileSync(lockPath, "", "utf-8");
     expect(fs.statSync(lockPath).size).toBe(0);
 
-    (ProcessLock as unknown as { reclaim: (p: string, t: string | null) => void }).reclaim(lockPath, null);
+    (ProcessLock as unknown as { reclaim: (p: string, t: string | null) => void }).reclaim(
+      lockPath,
+      null,
+    );
     expect(fs.existsSync(lockPath)).toBe(false);
   });
 
@@ -280,40 +305,55 @@ describe("ProcessLock Unit Tests", () => {
 
     const lockPath = ProcessLock.getLockPath(tempDir);
     // Live lock from current PID so acquire won't reclaim it as dead
-    fs.writeFileSync(lockPath, JSON.stringify({ pid: process.pid, token: "other", time: Date.now() }), "utf-8");
+    fs.writeFileSync(
+      lockPath,
+      JSON.stringify({ pid: process.pid, token: "other", time: Date.now() }),
+      "utf-8",
+    );
 
     try {
-      expect(() => ProcessLock.acquire(tempDir, { timeoutMs: 100, retryIntervalMs: 20 })).toThrow(/获取安装锁超时/);
+      expect(() => ProcessLock.acquire(tempDir, { timeoutMs: 100, retryIntervalMs: 20 })).toThrow(
+        /获取安装锁超时/,
+      );
     } finally {
-      try { fs.unlinkSync(lockPath); } catch {}
+      try {
+        fs.unlinkSync(lockPath);
+      } catch {}
     }
   });
 
-  it.skipIf(!canSymlink)("should refuse live and dangling symlinks at lock path immediately and return structured error in Installer/Uninstaller (D-14)", () => {
-    const lockPath = ProcessLock.getLockPath(tempDir);
-    const externalTarget = path.join(tempDir, "external.txt");
-    fs.writeFileSync(externalTarget, "keep-me", "utf-8");
+  it.skipIf(!canSymlink)(
+    "should refuse live and dangling symlinks at lock path immediately and return structured error in Installer/Uninstaller (D-14)",
+    () => {
+      const lockPath = ProcessLock.getLockPath(tempDir);
+      const externalTarget = path.join(tempDir, "external.txt");
+      fs.writeFileSync(externalTarget, "keep-me", "utf-8");
 
-    // 1. Live symlink at .agent-code-review.lock
-    fs.symlinkSync(externalTarget, lockPath);
-    const startLive = Date.now();
-    expect(() => ProcessLock.acquire(tempDir, { timeoutMs: 5000 })).toThrow(/Refusing symbolic link/);
-    expect(Date.now() - startLive).toBeLessThan(1000);
-    expect(fs.readFileSync(externalTarget, "utf-8")).toBe("keep-me");
+      // 1. Live symlink at .agent-code-review.lock
+      fs.symlinkSync(externalTarget, lockPath);
+      const startLive = Date.now();
+      expect(() => ProcessLock.acquire(tempDir, { timeoutMs: 5000 })).toThrow(
+        /Refusing symbolic link/,
+      );
+      expect(Date.now() - startLive).toBeLessThan(1000);
+      expect(fs.readFileSync(externalTarget, "utf-8")).toBe("keep-me");
 
-    // Installer & Uninstaller return structured failure instead of throwing
-    const installRes = new Installer({ homeDir: tempDir, platform: "antigravity" }).execute();
-    expect(installRes.success).toBe(false);
-    expect(installRes.errors[0]).toMatch(/Refusing symbolic link/);
+      // Installer & Uninstaller return structured failure instead of throwing
+      const installRes = new Installer({ homeDir: tempDir, platform: "antigravity" }).execute();
+      expect(installRes.success).toBe(false);
+      expect(installRes.errors[0]).toMatch(/Refusing symbolic link/);
 
-    const uninstallRes = new Uninstaller({ homeDir: tempDir }).execute();
-    expect(uninstallRes.success).toBe(false);
-    expect(uninstallRes.errors[0]).toMatch(/Refusing symbolic link/);
+      const uninstallRes = new Uninstaller({ homeDir: tempDir }).execute();
+      expect(uninstallRes.success).toBe(false);
+      expect(uninstallRes.errors[0]).toMatch(/Refusing symbolic link/);
 
-    // 2. Dangling symlink at .agent-code-review.lock
-    fs.unlinkSync(externalTarget);
-    const startDangling = Date.now();
-    expect(() => ProcessLock.acquire(tempDir, { timeoutMs: 5000 })).toThrow(/Refusing symbolic link/);
-    expect(Date.now() - startDangling).toBeLessThan(1000);
-  });
+      // 2. Dangling symlink at .agent-code-review.lock
+      fs.unlinkSync(externalTarget);
+      const startDangling = Date.now();
+      expect(() => ProcessLock.acquire(tempDir, { timeoutMs: 5000 })).toThrow(
+        /Refusing symbolic link/,
+      );
+      expect(Date.now() - startDangling).toBeLessThan(1000);
+    },
+  );
 });

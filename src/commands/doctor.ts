@@ -9,7 +9,7 @@ export function runDoctor(options: DoctorCommandOptions = {}): number {
   console.log(`🩺 Diagnosing Agent Code Review environment...`);
   const report = Doctor.diagnose({
     homeDir: options.homeDir,
-    workspaceRoot: options.workspaceRoot
+    workspaceRoot: options.workspaceRoot,
   });
 
   console.log(`\nHome Directory: ${report.homeDir}`);
@@ -22,7 +22,9 @@ export function runDoctor(options: DoctorCommandOptions = {}): number {
 
   console.log(`\n--------------------------------------------------`);
   if (report.overallHealthy) {
-    console.log(`✅ Configuration checks passed. Native agent discovery and review quality are not checked by doctor.`);
+    console.log(
+      `✅ Configuration checks passed. Native agent discovery and review quality are not checked by doctor.`,
+    );
     return 0;
   } else {
     console.log(`⚠️ Some checks require attention.`);

@@ -1,8 +1,8 @@
 import * as path from "node:path";
-import { toPosixRelativePath } from "../normalize-path.js";
-import { TemplateFile, AdapterOptions, REVIEWER_ROLES } from "../types.js";
 import { loadCanonicalPrompt, loadCanonicalSkill } from "../assets-root.js";
+import { toPosixRelativePath } from "../normalize-path.js";
 import { renderCodexAgent, renderCodexSkill } from "../render.js";
+import { type AdapterOptions, REVIEWER_ROLES, type TemplateFile } from "../types.js";
 
 export class CodexAdapter {
   public static readonly platformId = "codex";
@@ -18,7 +18,7 @@ export class CodexAdapter {
     const renderedSkill = renderCodexSkill(skillBody);
     files.push({
       relativePath: toPosixRelativePath(".agents/skills/code-review/SKILL.md"),
-      sourceContent: renderedSkill
+      sourceContent: renderedSkill,
     });
 
     // 2. Agents TOML into .codex/agents/${role}.toml
@@ -27,7 +27,7 @@ export class CodexAdapter {
       const rendered = renderCodexAgent(role, prompt);
       files.push({
         relativePath: toPosixRelativePath(path.join(".codex/agents", `${role}.toml`)),
-        sourceContent: rendered
+        sourceContent: rendered,
       });
     }
 

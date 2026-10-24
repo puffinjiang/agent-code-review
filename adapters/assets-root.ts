@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ReviewerRole } from "./types.js";
+import type { ReviewerRole } from "./types.js";
 
 /**
  * 定位 Canonical 资产根目录（assets/）。
@@ -17,7 +17,7 @@ export function resolveAssetsRoot(customDir?: string): string {
       customDir,
       path.join(customDir, "assets"),
       path.resolve(customDir),
-      path.resolve(customDir, "assets")
+      path.resolve(customDir, "assets"),
     ];
 
     for (const cand of candidates) {
@@ -28,23 +28,24 @@ export function resolveAssetsRoot(customDir?: string): string {
 
     throw new Error(
       `指定的资源目录缺失或不完整: '${customDir}'。\n` +
-      `期望在该目录下包含 prompts/ 与 skills/ 子目录。`
+        `期望在该目录下包含 prompts/ 与 skills/ 子目录。`,
     );
   }
 
   const here = path.dirname(fileURLToPath(import.meta.url));
   const candidates = [
-    path.resolve(here, "../assets"),      // dist/
-    path.resolve(here, "../../assets"),   // src 树 (adapters/xxx -> root)
-    path.resolve(here, "../../../assets")
+    path.resolve(here, "../assets"), // dist/
+    path.resolve(here, "../../assets"), // src 树 (adapters/xxx -> root)
+    path.resolve(here, "../../../assets"),
   ];
 
   const hit = candidates.find((p) => fs.existsSync(p) && fs.existsSync(path.join(p, "prompts")));
   if (!hit) {
     throw new Error(
       `无法定位 assets/ 资源目录。已尝试以下路径：\n` +
-      candidates.map((p) => `  - ${p}`).join("\n") + "\n" +
-      `这通常意味着 npm 包构建不完整（assets/ 未被打包）或工作区损坏，请重新安装 agent-code-review。`
+        candidates.map((p) => `  - ${p}`).join("\n") +
+        "\n" +
+        `这通常意味着 npm 包构建不完整（assets/ 未被打包）或工作区损坏，请重新安装 agent-code-review。`,
     );
   }
 

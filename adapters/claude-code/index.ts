@@ -1,8 +1,8 @@
 import * as path from "node:path";
-import { toPosixRelativePath } from "../normalize-path.js";
-import { TemplateFile, AdapterOptions, REVIEWER_ROLES } from "../types.js";
 import { loadCanonicalPrompt, loadCanonicalSkill } from "../assets-root.js";
+import { toPosixRelativePath } from "../normalize-path.js";
 import { renderClaudeAgent, renderClaudeSkill } from "../render.js";
+import { type AdapterOptions, REVIEWER_ROLES, type TemplateFile } from "../types.js";
 
 export class ClaudeCodeAdapter {
   public static readonly platformId = "claude-code";
@@ -19,7 +19,7 @@ export class ClaudeCodeAdapter {
       const rendered = renderClaudeAgent(role, prompt);
       files.push({
         relativePath: toPosixRelativePath(path.join(".claude/agents", `${role}.md`)),
-        sourceContent: rendered
+        sourceContent: rendered,
       });
     }
 
@@ -28,7 +28,7 @@ export class ClaudeCodeAdapter {
     const renderedSkill = renderClaudeSkill(skillBody);
     files.push({
       relativePath: toPosixRelativePath(".claude/skills/code-review/SKILL.md"),
-      sourceContent: renderedSkill
+      sourceContent: renderedSkill,
     });
 
     return files;

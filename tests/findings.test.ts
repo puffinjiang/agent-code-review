@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { validateFinding, Finding } from "./helpers/findings.js";
+import { describe, expect, it } from "vitest";
+import { type Finding, validateFinding } from "./helpers/findings.js";
 
 describe("Findings Schema Validation", () => {
   const validFinding: Finding = {
@@ -19,8 +19,8 @@ describe("Findings Schema Validation", () => {
     verification: {
       method: "trace",
       tests_executed: false,
-      notes: "Confirmed that schema defines deleted_at and callers assume soft deletion."
-    }
+      notes: "Confirmed that schema defines deleted_at and callers assume soft deletion.",
+    },
   };
 
   it("should validate a complete valid finding", () => {
@@ -57,7 +57,10 @@ describe("Findings Schema Validation", () => {
     { end_line: Infinity },
     { verification: { method: "invented", tests_executed: false } },
     { status: "REJECTED", verification: { method: "trace", tests_executed: false } },
-    { status: "REJECTED", verification: { method: "trace", tests_executed: false, counter_evidence: "   " } }
+    {
+      status: "REJECTED",
+      verification: { method: "trace", tests_executed: false, counter_evidence: "   " },
+    },
   ])("should reject invalid protocol data: %j", (invalid) => {
     expect(validateFinding({ ...validFinding, ...invalid } as any).valid).toBe(false);
   });
@@ -69,8 +72,9 @@ describe("Findings Schema Validation", () => {
       verification: {
         method: "trace",
         tests_executed: false,
-        counter_evidence: "Middleware requireActiveUser already filters deleted_at IS NULL at src/middleware/auth.ts:28."
-      }
+        counter_evidence:
+          "Middleware requireActiveUser already filters deleted_at IS NULL at src/middleware/auth.ts:28.",
+      },
     };
     expect(validateFinding(rejected)).toEqual({ valid: true, errors: [] });
   });

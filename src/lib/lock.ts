@@ -1,6 +1,6 @@
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import * as crypto from "node:crypto";
 
 export const LOCK_FILENAME = ".agent-code-review.lock";
 
@@ -61,9 +61,9 @@ export class ProcessLock {
           throw Object.assign(
             new Error(
               `无法读取安装锁文件（权限不足/${code}）: ${filePath}\n` +
-              `   若确认该文件无用，可使用更高权限删除后重试: rm "${filePath}"`
+                `   若确认该文件无用，可使用更高权限删除后重试: rm "${filePath}"`,
             ),
-            { code }
+            { code },
           );
         }
         return null;
@@ -82,7 +82,7 @@ export class ProcessLock {
         return {
           pid: data.pid,
           token: data.token,
-          time: data.time
+          time: data.time,
         };
       }
       return null;
@@ -129,7 +129,9 @@ export class ProcessLock {
             throw directErr;
           } finally {
             if (directFd !== null) {
-              try { fs.closeSync(directFd); } catch {}
+              try {
+                fs.closeSync(directFd);
+              } catch {}
             }
           }
         }
@@ -137,9 +139,13 @@ export class ProcessLock {
       }
     } finally {
       if (fd !== null) {
-        try { fs.closeSync(fd); } catch {}
+        try {
+          fs.closeSync(fd);
+        } catch {}
       }
-      try { fs.unlinkSync(tmpPath); } catch {}
+      try {
+        fs.unlinkSync(tmpPath);
+      } catch {}
     }
   }
 
@@ -243,7 +249,7 @@ export class ProcessLock {
           if (stat.size > 0 && age > 500) {
             throw new Error(
               `Lock path '${lockPath}' contains an invalid or foreign file. Refusing to overwrite.\n` +
-              `   若确认为本工具遗留的残留，可删除后重试: rm "${lockPath}"`
+                `   若确认为本工具遗留的残留，可删除后重试: rm "${lockPath}"`,
             );
           }
         } else {
@@ -268,7 +274,7 @@ export class ProcessLock {
             const heldSec = Math.max(1, Math.round((Date.now() - data.time) / 1000));
             process.stderr.write(
               `⏳ 检测到另一个 agent-code-review 正在运行 (PID: ${data.pid}, 已持锁 ${heldSec} 秒)\n` +
-              `   锁路径: ${lockPath}\n`
+                `   锁路径: ${lockPath}\n`,
             );
           }
         }
@@ -291,15 +297,20 @@ export class ProcessLock {
       // C-2: 忽略超时诊断阶段的读取异常，降级显示通用被占用提示
     }
     const pidInfo = lastData ? `由正在运行的进程 (PID: ${lastData.pid}) 持有` : `被占用`;
-    const inspectCmd = process.platform === "win32"
-      ? (lastData ? `Get-Process -Id ${lastData.pid}` : `dir "${lockPath}"`)
-      : (lastData ? `ps -p ${lastData.pid}` : `ls -l "${lockPath}"`);
+    const inspectCmd =
+      process.platform === "win32"
+        ? lastData
+          ? `Get-Process -Id ${lastData.pid}`
+          : `dir "${lockPath}"`
+        : lastData
+          ? `ps -p ${lastData.pid}`
+          : `ls -l "${lockPath}"`;
 
     throw new Error(
       `获取安装锁超时 (${timeoutMs}ms)：该锁${pidInfo}。\n` +
-      `   锁路径: ${lockPath}\n` +
-      `   可运行 '${inspectCmd}' 查看该进程状态。\n` +
-      `   若确认该进程已异常退出，下次运行本工具时会自动安全回收锁。`
+        `   锁路径: ${lockPath}\n` +
+        `   可运行 '${inspectCmd}' 查看该进程状态。\n` +
+        `   若确认该进程已异常退出，下次运行本工具时会自动安全回收锁。`,
     );
   }
 

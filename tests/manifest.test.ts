@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
-import * as path from "node:path";
 import * as os from "node:os";
-import { ManifestManager, InstallationManifest } from "../src/lib/manifest.js";
+import * as path from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { type InstallationManifest, ManifestManager } from "../src/lib/manifest.js";
 
 describe("ManifestManager Unit Tests", () => {
   let tempDir: string;
@@ -33,9 +33,9 @@ describe("ManifestManager Unit Tests", () => {
           path: ".gemini/config/skills/code-review/SKILL.md",
           hash: ManifestManager.computeHash("content"),
           platform: "antigravity",
-          installedAt: new Date().toISOString()
-        }
-      ]
+          installedAt: new Date().toISOString(),
+        },
+      ],
     };
 
     ManifestManager.save(tempDir, manifest);
@@ -66,9 +66,9 @@ describe("ManifestManager Unit Tests", () => {
         packageVersion: "0.1.0",
         scope: "global",
         platforms: ["antigravity"],
-        files: [{ path: "file.md", hash: "not-a-sha256", platform: "antigravity" }]
+        files: [{ path: "file.md", hash: "not-a-sha256", platform: "antigravity" }],
       }),
-      "utf-8"
+      "utf-8",
     );
     expect(ManifestManager.load(tempDir)).toBeNull();
   });
@@ -82,7 +82,7 @@ describe("ManifestManager Unit Tests", () => {
         platforms: ["antigravity"],
         installedAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-        files: []
+        files: [],
       });
     }
     expect(ManifestManager.load(tempDir)?.platforms).toEqual(["antigravity"]);

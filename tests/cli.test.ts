@@ -1,12 +1,12 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import * as fs from "node:fs";
-import * as path from "node:path";
-import * as os from "node:os";
 import { execSync } from "node:child_process";
-import { runInit } from "../src/commands/init.js";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runDoctor } from "../src/commands/doctor.js";
-import { runUninstall } from "../src/commands/uninstall.js";
+import { runInit } from "../src/commands/init.js";
 import { runScope } from "../src/commands/scope.js";
+import { runUninstall } from "../src/commands/uninstall.js";
 
 describe("CLI Commands Integration", () => {
   let tempDir: string;
@@ -20,7 +20,7 @@ describe("CLI Commands Integration", () => {
       HOME: process.env.HOME,
       USERPROFILE: process.env.USERPROFILE,
       HOMEDRIVE: process.env.HOMEDRIVE,
-      HOMEPATH: process.env.HOMEPATH
+      HOMEPATH: process.env.HOMEPATH,
     };
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "acr-cli-test-"));
     tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "acr-cli-home-"));

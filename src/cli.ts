@@ -1,8 +1,8 @@
 import { Command } from "commander";
-import { runInit } from "./commands/init.js";
 import { runDoctor } from "./commands/doctor.js";
-import { runUninstall } from "./commands/uninstall.js";
+import { runInit } from "./commands/init.js";
 import { runScope } from "./commands/scope.js";
+import { runUninstall } from "./commands/uninstall.js";
 
 const program = new Command();
 

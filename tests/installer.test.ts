@@ -1,14 +1,14 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { execFile, execSync } from "node:child_process";
 import * as fs from "node:fs";
-import * as path from "node:path";
 import * as os from "node:os";
+import * as path from "node:path";
 import { pathToFileURL } from "node:url";
-import { execSync, execFile } from "node:child_process";
 import { buildSync } from "esbuild";
-import { Installer } from "../src/lib/installer.js";
-import { Uninstaller } from "../src/lib/uninstaller.js";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Doctor } from "../src/lib/doctor.js";
+import { Installer } from "../src/lib/installer.js";
 import { ManifestManager } from "../src/lib/manifest.js";
+import { Uninstaller } from "../src/lib/uninstaller.js";
 
 describe("Global First Installer Lifecycle", () => {
   let tempHome: string;
@@ -16,7 +16,9 @@ describe("Global First Installer Lifecycle", () => {
 
   beforeEach(() => {
     tempHome = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "acr-home-test-")));
-    tempWorkspace = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "acr-workspace-test-")));
+    tempWorkspace = fs.realpathSync.native(
+      fs.mkdtempSync(path.join(os.tmpdir(), "acr-workspace-test-")),
+    );
     execSync("git init", { cwd: tempWorkspace, stdio: "ignore" });
   });
 
@@ -29,7 +31,7 @@ describe("Global First Installer Lifecycle", () => {
     const installer = new Installer({
       homeDir: tempHome,
       workspaceRoot: tempWorkspace,
-      platform: "antigravity"
+      platform: "antigravity",
     });
 
     expect(installer.getBaseDir()).toBe(tempHome);
@@ -60,7 +62,7 @@ describe("Global First Installer Lifecycle", () => {
       homeDir: tempHome,
       workspaceRoot: tempWorkspace,
       scope: "local",
-      platform: "antigravity"
+      platform: "antigravity",
     });
 
     const result = installer.execute();
@@ -77,7 +79,7 @@ describe("Global First Installer Lifecycle", () => {
       homeDir: tempHome,
       workspaceRoot: tempWorkspace,
       scope: "global",
-      platform: "all"
+      platform: "all",
     });
 
     const result = installer.execute();
@@ -85,12 +87,16 @@ describe("Global First Installer Lifecycle", () => {
     expect(result.platforms).toEqual(["antigravity", "claude-code", "codex"]);
 
     // Verify Antigravity
-    expect(fs.existsSync(path.join(tempHome, ".gemini/config/skills/code-review/SKILL.md"))).toBe(true);
+    expect(fs.existsSync(path.join(tempHome, ".gemini/config/skills/code-review/SKILL.md"))).toBe(
+      true,
+    );
     // Verify Claude Code
     expect(fs.existsSync(path.join(tempHome, ".claude/skills/code-review/SKILL.md"))).toBe(true);
     // Verify Codex
     expect(fs.existsSync(path.join(tempHome, ".agents/skills/code-review/SKILL.md"))).toBe(true);
-    expect(fs.existsSync(path.join(tempHome, ".codex/agents/correctness-reviewer.toml"))).toBe(true);
+    expect(fs.existsSync(path.join(tempHome, ".codex/agents/correctness-reviewer.toml"))).toBe(
+      true,
+    );
     // Codex 通过 .codex/agents/*.toml 自动发现角色，安装器不得创建 config.toml
     expect(fs.existsSync(path.join(tempHome, ".codex/config.toml"))).toBe(false);
   });
@@ -99,7 +105,7 @@ describe("Global First Installer Lifecycle", () => {
     const installer = new Installer({
       homeDir: tempHome,
       workspaceRoot: tempWorkspace,
-      platform: "claude-code"
+      platform: "claude-code",
     });
 
     const result1 = installer.execute();
@@ -128,7 +134,7 @@ describe("Global First Installer Lifecycle", () => {
     ManifestManager.save(tempHome, {
       ...originalManifest,
       platforms: ["antigravity", "claude-code"],
-      files: antigravityOnlyFiles
+      files: antigravityOnlyFiles,
     });
 
     const tamperedManifest = ManifestManager.load(tempHome)!;
@@ -153,8 +159,12 @@ describe("Global First Installer Lifecycle", () => {
     expect(unResult.success).toBe(true);
     expect(unResult.removedFiles.length).toBe(12);
     expect(fs.existsSync(path.join(tempHome, ".claude/skills/code-review/SKILL.md"))).toBe(false);
-    expect(fs.existsSync(path.join(tempHome, ".claude/agents/correctness-reviewer.md"))).toBe(false);
-    expect(fs.existsSync(path.join(tempHome, ".gemini/config/skills/code-review/SKILL.md"))).toBe(false);
+    expect(fs.existsSync(path.join(tempHome, ".claude/agents/correctness-reviewer.md"))).toBe(
+      false,
+    );
+    expect(fs.existsSync(path.join(tempHome, ".gemini/config/skills/code-review/SKILL.md"))).toBe(
+      false,
+    );
     expect(fs.existsSync(path.join(tempHome, ".agent-code-review.json"))).toBe(false);
   });
 
@@ -180,14 +190,22 @@ describe("Global First Installer Lifecycle", () => {
 
   it("should ignore leftover installer tmp files via git ignore (N-2)", () => {
     // 1. Local installation in git repository
-    new Installer({ homeDir: tempHome, workspaceRoot: tempWorkspace, scope: "local", platform: "antigravity" }).execute();
+    new Installer({
+      homeDir: tempHome,
+      workspaceRoot: tempWorkspace,
+      scope: "local",
+      platform: "antigravity",
+    }).execute();
 
     // 2. Copy root .gitignore to tempWorkspace so git honors project rules
     const rootGitignore = fs.readFileSync(path.resolve(".gitignore"), "utf-8");
     fs.writeFileSync(path.join(tempWorkspace, ".gitignore"), rootGitignore);
 
     // 3. Simulate a crashed tmp file left behind in the workspace
-    const leftoverTmp = path.join(tempWorkspace, ".agents/agents/correctness-reviewer.md.tmp.1234.abcd");
+    const leftoverTmp = path.join(
+      tempWorkspace,
+      ".agents/agents/correctness-reviewer.md.tmp.1234.abcd",
+    );
     fs.writeFileSync(leftoverTmp, "partial garbage content");
 
     // 4. git status must ignore the .tmp. file
@@ -230,7 +248,8 @@ describe("Global First Installer Lifecycle", () => {
     const codexDir = path.join(tempHome, ".codex");
     fs.mkdirSync(codexDir, { recursive: true });
     const configPath = path.join(codexDir, "config.toml");
-    const original = "# User existing config\nmodel = 'gpt-4'\n\n[mcp_servers.docs]\ncommand = 'docs-server'\n";
+    const original =
+      "# User existing config\nmodel = 'gpt-4'\n\n[mcp_servers.docs]\ncommand = 'docs-server'\n";
     fs.writeFileSync(configPath, original, "utf-8");
 
     const result = new Installer({ homeDir: tempHome, platform: "codex" }).execute();
@@ -246,7 +265,7 @@ describe("Global First Installer Lifecycle", () => {
   it("should protect modified files during uninstall unless forced", () => {
     const installer = new Installer({
       homeDir: tempHome,
-      platform: "claude-code"
+      platform: "claude-code",
     });
     installer.execute();
 
@@ -257,7 +276,7 @@ describe("Global First Installer Lifecycle", () => {
     const uninstaller = new Uninstaller({
       homeDir: tempHome,
       scope: "global",
-      force: false
+      force: false,
     });
 
     const unResult = uninstaller.execute();
@@ -268,7 +287,7 @@ describe("Global First Installer Lifecycle", () => {
     const forceUninstaller = new Uninstaller({
       homeDir: tempHome,
       scope: "global",
-      force: true
+      force: true,
     });
     const forceResult = forceUninstaller.execute();
     expect(forceResult.success).toBe(true);
@@ -279,7 +298,12 @@ describe("Global First Installer Lifecycle", () => {
     // Install global
     new Installer({ homeDir: tempHome, scope: "global", platform: "antigravity" }).execute();
     // Install local
-    new Installer({ homeDir: tempHome, workspaceRoot: tempWorkspace, scope: "local", platform: "antigravity" }).execute();
+    new Installer({
+      homeDir: tempHome,
+      workspaceRoot: tempWorkspace,
+      scope: "local",
+      platform: "antigravity",
+    }).execute();
 
     const report = Doctor.diagnose({ homeDir: tempHome, workspaceRoot: tempWorkspace });
     const precedenceCheck = report.checks.find((c) => c.name === "Configuration Precedence");
@@ -305,7 +329,7 @@ describe("Global First Installer Lifecycle", () => {
       outfile: bundlePath,
       bundle: true,
       platform: "node",
-      format: "esm"
+      format: "esm",
     });
 
     const assetsRoot = path.resolve("assets");
@@ -334,7 +358,7 @@ describe("Global First Installer Lifecycle", () => {
     // Spawn two real child processes concurrently; one briefly holds the lock to force EEXIST contention
     const [resA, resB] = await Promise.all([
       runChildInstall("claude-code", 80),
-      runChildInstall("codex", 0)
+      runChildInstall("codex", 0),
     ]);
 
     expect(resA.success).toBe(true);
@@ -362,7 +386,7 @@ describe("Global First Installer Lifecycle", () => {
     const installer = new Installer({
       homeDir: tempHome,
       workspaceRoot: tempWorkspace,
-      platform: "antigravity"
+      platform: "antigravity",
     });
     const installRes = installer.execute();
     expect(installRes.success).toBe(true);
@@ -376,7 +400,7 @@ describe("Global First Installer Lifecycle", () => {
     // 3. Run doctor: it MUST NOT crash with unhandled EISDIR error
     const diagnosis = Doctor.diagnose({
       workspaceRoot: tempWorkspace,
-      homeDir: tempHome
+      homeDir: tempHome,
     });
 
     expect(diagnosis).toBeDefined();
@@ -404,7 +428,7 @@ describe("Global First Installer Lifecycle", () => {
       const installer = new Installer({
         homeDir: tempHome,
         workspaceRoot: tempWorkspace,
-        platform: "claude-code"
+        platform: "claude-code",
       });
 
       const result = installer.execute();

@@ -1,4 +1,4 @@
-import { ReviewerRole, REVIEWER_METADATA, SKILL_METADATA } from "./types.js";
+import { REVIEWER_METADATA, type ReviewerRole, SKILL_METADATA } from "./types.js";
 
 /**
  * 平台渲染引擎：将 Canonical Markdown 正文与各平台专有元数据/包装层动态拼接。
@@ -22,7 +22,7 @@ export function renderClaudeAgent(role: ReviewerRole, body: string): string {
 export function renderClaudeSkill(body: string): string {
   const claudeBody = body.replace(
     "# Independent code review\n\n",
-    "# Independent code review\n\nArguments: $ARGUMENTS\n\n"
+    "# Independent code review\n\nArguments: $ARGUMENTS\n\n",
   );
   return `---\nname: ${SKILL_METADATA.name}\ndescription: ${SKILL_METADATA.description}\nuser-invocable: true\nallowed-tools: ["Read", "Grep", "Glob", "Bash", "Agent"]\n---\n\n${claudeBody}`;
 }

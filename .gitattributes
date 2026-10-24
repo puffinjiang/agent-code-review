@@ -3,5 +3,6 @@
 # 「用户是否改过文件」判断会失效。
 assets/**   text eol=lf
 
-# 其余文本文件交给 Git 自动判定，避免误伤图片等二进制资源
-* text=auto
+# 跨平台代码、配置文件与文档强制使用 LF 换行符，避免 Windows Git 默认检出 CRLF
+# 导致代码格式化器（Biome）、哈希校验及跨平台测试产生差异。
+* text=auto eol=lf

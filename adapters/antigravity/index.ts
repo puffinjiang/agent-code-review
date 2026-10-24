@@ -1,9 +1,9 @@
-import * as path from "node:path";
 import * as fs from "node:fs";
-import { toPosixRelativePath } from "../normalize-path.js";
-import { TemplateFile, AdapterOptions, REVIEWER_ROLES } from "../types.js";
+import * as path from "node:path";
 import { loadCanonicalPrompt, loadCanonicalSkill } from "../assets-root.js";
+import { toPosixRelativePath } from "../normalize-path.js";
 import { renderAntigravityAgent, renderAntigravitySkill } from "../render.js";
+import { type AdapterOptions, REVIEWER_ROLES, type TemplateFile } from "../types.js";
 
 export type { TemplateFile } from "../types.js";
 
@@ -27,7 +27,7 @@ export class AntigravityAdapter {
       const rendered = renderAntigravityAgent(role, prompt);
       files.push({
         relativePath: toPosixRelativePath(path.join(agentsDest, role, "agent.md")),
-        sourceContent: rendered
+        sourceContent: rendered,
       });
     }
 
@@ -36,7 +36,7 @@ export class AntigravityAdapter {
     const renderedSkill = renderAntigravitySkill(skillBody);
     files.push({
       relativePath: toPosixRelativePath(path.join(skillsDest, "code-review/SKILL.md")),
-      sourceContent: renderedSkill
+      sourceContent: renderedSkill,
     });
 
     // 3. 若为全局安装且检测到 Antigravity CLI 目录，增加兼容副本
@@ -45,7 +45,7 @@ export class AntigravityAdapter {
       if (fs.existsSync(agyCliDir)) {
         files.push({
           relativePath: toPosixRelativePath(".gemini/antigravity-cli/skills/code-review/SKILL.md"),
-          sourceContent: renderedSkill
+          sourceContent: renderedSkill,
         });
       }
     }
