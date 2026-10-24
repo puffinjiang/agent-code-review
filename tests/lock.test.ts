@@ -86,46 +86,63 @@ describe("ProcessLock Unit Tests", () => {
     const release = ProcessLock.acquire(tempDir);
     try {
       expect(() =>
-        ProcessLock.acquire(tempDir, { timeoutMs: 150, retryIntervalMs: 25, staleMs: 60000 })
-      ).toThrow(/Failed to acquire lock/);
+        ProcessLock.acquire(tempDir, { timeoutMs: 150, retryIntervalMs: 25 })
+      ).toThrow(/获取安装锁超时/);
     } finally {
       release();
     }
   });
 
-  it("should keep live process lock active via heartbeat without being stolen by age (V-1)", async () => {
-    // Process A holds lock with short staleMs (300ms)
-    const releaseA = ProcessLock.acquire(tempDir, { staleMs: 300 });
+  it("should never steal a live process lock when PID and startEpoch match (V-1)", () => {
+    const releaseA = ProcessLock.acquire(tempDir);
     try {
-      // Wait 400ms: with heartbeat, Process A continuously refreshes mtime
-      await new Promise((resolve) => setTimeout(resolve, 400));
-
-      // Process B tries to acquire: Process A is alive and heartbeat is ticking, so B must time out
+      // Process B attempts to acquire with short timeout
+      // Since Process A is alive and startEpoch matches, B must NOT steal A's active lock
       expect(() =>
-        ProcessLock.acquire(tempDir, { staleMs: 300, timeoutMs: 150, retryIntervalMs: 25 })
-      ).toThrow(/Failed to acquire lock/);
+        ProcessLock.acquire(tempDir, { timeoutMs: 150, retryIntervalMs: 25 })
+      ).toThrow(/获取安装锁超时/);
     } finally {
       releaseA();
     }
   });
 
-  it("should break abandoned lock when heartbeat stops and age exceeds staleMs, even if PID was recycled (e.g. PID 1)", () => {
+  it("should immediately break abandoned lock when PID was recycled (e.g. PID 1 with mismatched startEpoch)", () => {
     const lockPath = ProcessLock.getLockPath(tempDir);
     // Simulate a crashed process whose PID was recycled to PID 1 (which is always alive)
-    // No heartbeat is running, so mtime is 60 seconds old
+    // The lock recorded startEpoch as 60 seconds ago, whereas PID 1 started at system boot (hours/days ago)
     fs.writeFileSync(
       lockPath,
-      JSON.stringify({ pid: 1, token: "reused-pid-token", time: Date.now() - 60000 }),
+      JSON.stringify({ pid: 1, token: "reused-pid-token", time: Date.now() - 60000, startEpoch: Date.now() - 60000 }),
       "utf-8"
     );
-    const oldTime = new Date(Date.now() - 60000);
-    fs.utimesSync(lockPath, oldTime, oldTime);
 
-    // Contender with staleMs = 1000 should break this abandoned lock via staleMs fallback
-    const release = ProcessLock.acquire(tempDir, { staleMs: 1000, timeoutMs: 500 });
+    // Contender should immediately detect startEpoch mismatch (> 2500ms) and break the abandoned lock
+    const release = ProcessLock.acquire(tempDir, { timeoutMs: 500 });
     expect(fs.existsSync(lockPath)).toBe(true);
     release();
     expect(fs.existsSync(lockPath)).toBe(false);
+  });
+
+  it("should print holding notification to stderr if waiting exceeds 300ms", async () => {
+    const releaseA = ProcessLock.acquire(tempDir);
+    const stderrSpy: string[] = [];
+    const originalWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      stderrSpy.push(String(chunk));
+      return true;
+    }) as any;
+
+    try {
+      expect(() =>
+        ProcessLock.acquire(tempDir, { timeoutMs: 400, retryIntervalMs: 50 })
+      ).toThrow(/获取安装锁超时/);
+
+      expect(stderrSpy.some((s) => s.includes("⏳ 检测到另一个 agent-code-review 正在运行"))).toBe(true);
+      expect(stderrSpy.some((s) => s.includes("锁路径:"))).toBe(true);
+    } finally {
+      process.stderr.write = originalWrite;
+      releaseA();
+    }
   });
 
   it("should not delete another holder's lock when an expired holder calls release() (V-2 TOCTOU)", () => {

@@ -94,18 +94,20 @@ describe("Global First Installer Lifecycle", () => {
     expect(fs.existsSync(path.join(tempHome, ".codex/config.toml"))).toBe(false);
   });
 
-  it("should be idempotent when re-run globally", () => {
+  it("should be idempotent when re-run globally and bypass lock on fast path", () => {
     const installer = new Installer({
       homeDir: tempHome,
       workspaceRoot: tempWorkspace,
       platform: "claude-code"
     });
 
-    installer.execute();
+    const result1 = installer.execute();
+    expect(result1.success).toBe(true);
 
-    // Re-run
+    // Re-run without --force: triggers Fast Path (A) without acquiring lock
     const result2 = installer.execute();
     expect(result2.success).toBe(true);
+    expect(result2.alreadyUpToDate).toBe(true);
     for (const item of result2.items) {
       expect(item.action).toBe("skip-identical");
     }

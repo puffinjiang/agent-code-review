@@ -39,6 +39,7 @@ export interface InstallResult {
   dryRun: boolean;
   items: InstallPlanItem[];
   manifestSaved: boolean;
+  alreadyUpToDate?: boolean;
   errors: string[];
 }
 
@@ -211,8 +212,43 @@ export class Installer {
       };
     }
 
-    // Physical installation acquires exclusive process lock on baseDir.
-    // 加锁失败、写盘失败、清单保存失败都统一转为结构化失败结果，不向 CLI 抛出（D-14）。
+    // A. 无锁快路径（只读检查，几十毫秒）：
+    // 若未指定 --force，先快速比对目标平台与当前文件哈希。
+    // 若已覆盖目标平台、版本一致且所有文件均为 skip-identical 且无冲突：
+    // 说明系统已处于最新安装状态，直接成功返回，完全不加锁、不写盘。
+    if (!this.force) {
+      try {
+        const manifest = ManifestManager.load(baseDir);
+        const targetPlatforms = this.getTargetPlatforms();
+        const hasLegacyEntry = manifest && manifest.files.some((f) => f.path === LEGACY_SHARED_CONFIG);
+        const allCovered = manifest && !hasLegacyEntry && targetPlatforms.every((p) => manifest.platforms.includes(p));
+        if (allCovered) {
+          const quickPlan = this.plan();
+          if (
+            quickPlan.conflicts.length === 0 &&
+            quickPlan.items.length > 0 &&
+            quickPlan.items.every((i) => i.action === "skip-identical")
+          ) {
+            return {
+              scope: this.scope,
+              baseDir,
+              platforms: targetPlatforms,
+              success: true,
+              dryRun: false,
+              items: quickPlan.items,
+              manifestSaved: false,
+              alreadyUpToDate: true,
+              errors: []
+            };
+          }
+        }
+      } catch {
+        // 快速检查遇异常时平滑进入加锁流程
+      }
+    }
+
+    // B. 加锁流程：进入独占排他锁，执行物理文件安装。
+    // 加锁失败、写盘失败、清单保存失败都统一转为结构化失败结果，不向 CLI 抛出未捕获异常。
     try {
       return this.executeLocked(baseDir);
     } catch (error) {
@@ -234,7 +270,7 @@ export class Installer {
       let items: InstallPlanItem[];
       let conflicts: string[];
       try {
-        // Re-evaluate plan under lock to incorporate any concurrent installations
+        // C. 临界区内双重校验：在锁内重新评估 plan，纳入锁竞争期间其他进程已完成的修改
         ({ items, conflicts } = this.plan());
         resolveManagedPath(baseDir, ".agent-code-review.json");
       } catch (error) {
@@ -258,8 +294,25 @@ export class Installer {
         };
       }
 
-      const now = new Date().toISOString();
+      // C. 临界区内双重检查：若等待锁期间排在前面的进程已完成全部写入且无遗留条目，无需重复写盘
       const existingManifest = ManifestManager.load(baseDir);
+      const hasLegacyEntry = existingManifest && existingManifest.files.some((f) => f.path === LEGACY_SHARED_CONFIG);
+      const hasModifications = items.some((i) => i.action === "create" || i.action === "update");
+      if (!hasModifications && !hasLegacyEntry && !this.force && items.length > 0) {
+        return {
+          scope: this.scope,
+          baseDir,
+          platforms: targetPlatforms,
+          success: true,
+          dryRun: false,
+          items,
+          manifestSaved: false,
+          alreadyUpToDate: true,
+          errors: []
+        };
+      }
+
+      const now = new Date().toISOString();
       const manifestFilesMap = new Map<string, ManifestFileEntry>();
 
       if (existingManifest) {

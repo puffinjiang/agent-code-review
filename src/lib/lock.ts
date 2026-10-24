@@ -1,11 +1,13 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
+import { execFileSync } from "node:child_process";
 
 export const LOCK_FILENAME = ".agent-code-review.lock";
 
 export interface LockOptions {
   timeoutMs?: number;
+  /** @deprecated 已升级为内核进程身份 (PID, startEpoch) 精确校验，不再依赖时间猜测 */
   staleMs?: number;
   retryIntervalMs?: number;
 }
@@ -14,6 +16,7 @@ interface LockData {
   pid: number;
   token: string;
   time: number;
+  startEpoch: number;
 }
 
 /**
@@ -51,7 +54,7 @@ export class ProcessLock {
 
   /**
    * V-6 完整修复：严格校验 ACR 锁格式。
-   * 本工具自身创建的锁必定包含数字 pid、UUID 字符串 token 以及数字 time。
+   * 本工具自身创建的锁必定包含数字 pid、UUID 字符串 token、数字 time 以及 startEpoch。
    * 任何缺少这些字段的 JSON（例如用户的自定义配置或仅含 pid 的外来数据）均视为非锁文件，防止被误判为孤立锁删除。
    */
   private static readLock(filePath: string): LockData | null {
@@ -65,9 +68,52 @@ export class ProcessLock {
         data.token.length > 0 &&
         typeof data.time === "number"
       ) {
-        return data as LockData;
+        return {
+          pid: data.pid,
+          token: data.token,
+          time: data.time,
+          startEpoch: typeof data.startEpoch === "number" ? data.startEpoch : data.time
+        };
       }
       return null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * 获取目标 PID 的真实进程启动时刻（毫秒级 Epoch）。
+   * - POSIX（macOS/Linux）：运行 `LC_ALL=C ps -o lstart= -p <pid>`，精度为秒级。
+   * - Windows：运行 PowerShell 获取 StartTime。
+   * 若进程不存在或查询失败，返回 null。
+   */
+  public static getProcessStartTime(pid: number): number | null {
+    if (!this.isPidAlive(pid)) return null;
+
+    if (process.platform === "win32") {
+      try {
+        const out = execFileSync(
+          "powershell",
+          ["-NoProfile", "-Command", `(Get-Process -Id ${pid} -ErrorAction SilentlyContinue).StartTime.ToFileTimeUtc()`],
+          { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"], timeout: 1500 }
+        ).trim();
+        const fileTime = BigInt(out);
+        const unixMs = Number((fileTime - 116444736000000000n) / 10000n);
+        return isNaN(unixMs) ? null : unixMs;
+      } catch {
+        return null;
+      }
+    }
+
+    try {
+      const out = execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], {
+        env: { ...process.env, LC_ALL: "C" },
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: 1500
+      }).trim();
+      const parsed = Date.parse(out);
+      return isNaN(parsed) ? null : parsed;
     } catch {
       return null;
     }
@@ -167,57 +213,54 @@ export class ProcessLock {
 
   public static acquire(baseDir: string, options: LockOptions = {}): () => void {
     const timeoutMs = options.timeoutMs ?? 5000;
-    const staleMs = options.staleMs ?? 15000;
     const retryIntervalMs = options.retryIntervalMs ?? 50;
 
     const lockPath = this.getLockPath(baseDir);
     const token = crypto.randomUUID();
     const startTime = Date.now();
+    const startEpoch = Math.floor(Date.now() - process.uptime() * 1000);
+    let notified = false;
 
     if (!fs.existsSync(baseDir)) fs.mkdirSync(baseDir, { recursive: true });
 
     while (Date.now() - startTime < timeoutMs) {
       this.lstatNoSymlink(lockPath);
 
-      if (this.tryCreate(lockPath, { pid: process.pid, token, time: Date.now() })) {
-        // 启动心跳刷新锁 mtime，确保当前存活进程持锁期间 age 绝不超期 (V-1 & V-2)
-        const heartbeatInterval = Math.max(50, Math.min(1000, Math.floor(staleMs / 3)));
-        const timer = setInterval(() => {
-          try {
-            const current = this.readLock(lockPath);
-            if (current && current.token === token) {
-              const now = new Date();
-              fs.utimesSync(lockPath, now, now);
-            }
-          } catch {
-            // ignore
-          }
-        }, heartbeatInterval);
-        if (timer.unref) timer.unref();
-
-        return () => {
-          clearInterval(timer);
-          this.release(lockPath, token);
-        };
+      if (this.tryCreate(lockPath, { pid: process.pid, token, time: Date.now(), startEpoch })) {
+        return () => this.release(lockPath, token);
       }
 
-      // 锁已存在：判断是否过期
+      // 锁已存在：进行进程身份精确校验与并发裁决
       const stat = this.lstatNoSymlink(lockPath);
       if (stat) {
         const data = this.readLock(lockPath);
         if (data) {
-          const age = Date.now() - stat.mtimeMs;
-          const isAlive = this.isPidAlive(data.pid);
-          // 破锁条件：
-          // 1. 持锁进程已死亡（!isAlive）：属于孤立崩溃残留，立即破锁；
-          // 2. 或 age > staleMs：即使持锁 pid 似乎存活（如 pid 被系统复用给了 pid 1 或无关进程），
-          //    但由于心跳早已中断（age 超过设定过期时间），证明原任务早已退出或废弃，作为兜底破锁。
-          const isStale = !isAlive || age > staleMs;
-          if (isStale) {
+          const actualStartTime = this.getProcessStartTime(data.pid);
+          if (actualStartTime === null) {
+            // PID 已死（进程异常退出/崩溃残留）→ 确认为孤儿死锁，立即打破回收
             this.breakStale(lockPath, data.token);
             continue;
           }
-          // 否则：持锁进程存活且心跳正常（age <= staleMs），为有效活锁，等待释放
+
+          // PID 存活，进一步核验该 PID 的实际启动时刻与锁内 startEpoch 是否匹配（容差 ±2500ms）
+          const timeDiff = Math.abs(actualStartTime - data.startEpoch);
+          if (timeDiff > 2500) {
+            // PID 存活但启动时刻不符（PID 被操作系统回收复用给无关进程，如 PID 1 或守护进程）→ 立即安全回收
+            this.breakStale(lockPath, data.token);
+            continue;
+          }
+
+          // PID 存活且启动时刻匹配 → 100% 确定为真实的并发 agent-code-review 活锁！
+          // 绝不按 age 超时抢占活锁，避免破坏并发互斥。
+          const elapsed = Date.now() - startTime;
+          if (elapsed >= 300 && !notified) {
+            notified = true;
+            const heldSec = Math.max(1, Math.round((Date.now() - data.time) / 1000));
+            process.stderr.write(
+              `⏳ 检测到另一个 agent-code-review 正在运行 (PID: ${data.pid}, 已持锁 ${heldSec} 秒)\n` +
+              `   锁路径: ${lockPath}\n`
+            );
+          }
         } else {
           // V-6 修复：非 ACR 锁结构的文件（外来文件或用户自定义文件），绝不能判定为 stale 并无条件删除
           // 若文件刚被创建（age <= 500ms），可能处于原子写入的极短过渡期，给予重试机会；
@@ -232,7 +275,18 @@ export class ProcessLock {
       this.sleepSync(retryIntervalMs);
     }
 
-    throw new Error(`Failed to acquire lock on '${lockPath}' within ${timeoutMs}ms.`);
+    const lastData = this.readLock(lockPath);
+    const pidInfo = lastData ? `由正在运行的进程 (PID: ${lastData.pid}) 持有` : `被占用`;
+    const inspectCmd = process.platform === "win32"
+      ? (lastData ? `Get-Process -Id ${lastData.pid}` : `dir "${lockPath}"`)
+      : (lastData ? `ps -p ${lastData.pid}` : `ls -l "${lockPath}"`);
+
+    throw new Error(
+      `获取安装锁超时 (${timeoutMs}ms)：该锁${pidInfo}。\n` +
+      `   锁路径: ${lockPath}\n` +
+      `   可运行 '${inspectCmd}' 查看该进程状态。\n` +
+      `   若确认该进程已异常退出，下次运行本工具时会自动安全回收锁。`
+    );
   }
 
   /**
