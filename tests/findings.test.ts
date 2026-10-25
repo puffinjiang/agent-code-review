@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { type Finding, validateFinding } from "./helpers/findings.js";
+import { type Finding, validateFinding, validateFindings } from "./helpers/findings.js";
 
 describe("Findings Schema Validation", () => {
   const validFinding: Finding = {
-    id: "ACR-001",
+    id: "corr-001",
     title: "Unfiltered soft-deleted records exposed in endpoint",
     severity: "P1",
     status: "CONFIRMED",
@@ -21,12 +21,30 @@ describe("Findings Schema Validation", () => {
       tests_executed: false,
       notes: "Confirmed that schema defines deleted_at and callers assume soft deletion.",
     },
+    merged_from: ["sec-002"],
   };
 
   it("should validate a complete valid finding", () => {
     const result = validateFinding(validFinding);
     expect(result.valid).toBe(true);
     expect(result.errors).toHaveLength(0);
+  });
+
+  it("should validate merged_from when provided and accept undefined", () => {
+    const withoutMerged = { ...validFinding, merged_from: undefined };
+    expect(validateFinding(withoutMerged).valid).toBe(true);
+
+    const withMultiple = { ...validFinding, merged_from: ["sec-001", "conc-002"] };
+    expect(validateFinding(withMultiple).valid).toBe(true);
+
+    const invalidType = { ...validFinding, merged_from: "not-an-array" };
+    expect(validateFinding(invalidType as any).valid).toBe(false);
+
+    const invalidElements = { ...validFinding, merged_from: [123] };
+    expect(validateFinding(invalidElements as any).valid).toBe(false);
+
+    const emptyElement = { ...validFinding, merged_from: [""] };
+    expect(validateFinding(emptyElement as any).valid).toBe(false);
   });
 
   it("should reject findings missing required fields", () => {
@@ -77,5 +95,35 @@ describe("Findings Schema Validation", () => {
       },
     };
     expect(validateFinding(rejected)).toEqual({ valid: true, errors: [] });
+  });
+
+  describe("Batch Findings Array Validation", () => {
+    it("should accept empty array", () => {
+      const res = validateFindings([]);
+      expect(res.valid).toBe(true);
+      expect(res.errors).toHaveLength(0);
+      expect(res.findings).toEqual([]);
+    });
+
+    it("should accept valid array of findings", () => {
+      const res = validateFindings([validFinding]);
+      expect(res.valid).toBe(true);
+      expect(res.findings).toHaveLength(1);
+    });
+
+    it("should reject non-array inputs", () => {
+      expect(validateFindings(null).valid).toBe(false);
+      expect(validateFindings({}).valid).toBe(false);
+      expect(validateFindings("string").valid).toBe(false);
+    });
+
+    it("should accumulate errors for multiple invalid items with id indicators", () => {
+      const invalidItem = { ...validFinding, id: "corr-002", title: "" };
+      const res = validateFindings([validFinding, invalidItem]);
+      expect(res.valid).toBe(false);
+      expect(res.errors.length).toBeGreaterThan(0);
+      expect(res.errors.some((e) => e.includes("corr-002"))).toBe(true);
+      expect(res.findings).toBeUndefined();
+    });
   });
 });
