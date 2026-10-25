@@ -315,11 +315,13 @@ describe("Global First Installer Lifecycle", () => {
     const report = Doctor.diagnose({ homeDir: tempHome, workspaceRoot: tempWorkspace });
     const verificationCheck = report.checks.find((c) => c.name === "Platform Verification Status");
     expect(verificationCheck).toBeDefined();
-    expect(verificationCheck?.status).toBe("warn");
-    expect(verificationCheck?.message).toContain("unverified");
-    expect(verificationCheck?.message).toContain("Codex CLI 0.163.0");
+    expect(verificationCheck?.status).toBe("pass");
+    expect(verificationCheck?.message).toContain("verified");
+    expect(verificationCheck?.message).toContain("Google Antigravity");
     expect(report.platformVerification).toBeDefined();
-    expect(report.platformVerification.antigravity.verified).toBe(false);
+    expect(report.platformVerification.antigravity.verified).toBe(true);
+    expect(report.platformVerification.codex.verified).toBe(true);
+    expect(report.platformVerification["claude-code"].verified).toBe(true);
   });
 
   it("should safely merge manifest records when multiple platforms are installed concurrently across processes (D-13 / D-14)", async () => {
