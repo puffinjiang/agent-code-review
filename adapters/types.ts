@@ -17,20 +17,22 @@ export const PLATFORMS: Record<"antigravity" | "codex" | "claude-code", Platform
     id: "antigravity",
     name: "Google Antigravity",
     verified: true,
-    notes: "Native agent discovery, subagent delegation, and review workflow validated.",
+    notes:
+      "Native agent discovery, subagent delegation, and review workflow validated; review detection precision not benchmarked.",
   },
   "claude-code": {
     id: "claude-code",
     name: "Claude Code",
     verified: true,
-    notes: "Native slash command, subagent prompt delegation, and review workflow validated.",
+    notes:
+      "Native slash command, subagent prompt delegation, and review workflow validated; review detection precision not benchmarked.",
   },
   codex: {
     id: "codex",
     name: "OpenAI Codex",
     verified: true,
     notes:
-      "Skill auto-discovery ($code-review), agent configuration, and review workflow validated.",
+      "Skill auto-discovery ($code-review), agent configuration, and review workflow validated; review detection precision not benchmarked.",
   },
 };
 

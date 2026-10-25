@@ -163,13 +163,29 @@ describe("Installable reviewer contracts (SSOT dynamic rendering)", () => {
             "REJECTED",
             "NEEDS_VERIFICATION",
           ]);
+          expect(examples.map((item: { id: string }) => item.id)).toEqual([
+            "corr-001",
+            "sec-001",
+            "perf-001",
+          ]);
+          expect(examples[0].merged_from).toEqual(["conc-002"]);
           expect(examples[0].verification).not.toHaveProperty("counter_evidence");
           expect(examples[1].verification.counter_evidence).toBeTypeOf("string");
           expect(examples[2].verification.notes).toBeTypeOf("string");
+          expect(instructions).toContain("Preserve candidate IDs");
+          expect(instructions).toContain("merged_from");
         } else {
           const expectedCategory = role.replace("-reviewer", "");
           expect(examples[0].category).toBe(expectedCategory);
           expect(examples[0].status).toBe("NEEDS_VERIFICATION");
+          const prefixMap: Record<string, string> = {
+            "correctness-reviewer": "corr-",
+            "security-reviewer": "sec-",
+            "concurrency-reviewer": "conc-",
+            "performance-reviewer": "perf-",
+          };
+          expect(examples[0].id.startsWith(prefixMap[role])).toBe(true);
+          expect(examples[0]).not.toHaveProperty("merged_from");
         }
 
         expect(instructions).toContain("Internal jobs");
@@ -308,16 +324,47 @@ describe("Installable reviewer contracts (SSOT dynamic rendering)", () => {
     expect(fs.existsSync(path.join(root, "skills"))).toBe(true);
   });
 
+  it("ensures assets/prompts/ directly contains strictly canonical reviewer prompts", () => {
+    const root = resolveAssetsRoot();
+    const promptFiles = fs
+      .readdirSync(path.join(root, "prompts"), { withFileTypes: true })
+      .filter((d) => d.isFile())
+      .map((d) => d.name);
+    expect(promptFiles.sort()).toEqual(roles.map((r) => `${r}.md`).sort());
+  });
+
   it.each(roles)("loads canonical prompt for %s successfully", (role) => {
     const prompt = loadCanonicalPrompt(role);
     expect(prompt.length).toBeGreaterThan(100);
     expect(prompt).toContain("## Shared review rules");
   });
 
-  it("loads canonical skill successfully", () => {
+  it("enforces 100% identical rendered shared review rules across all roles without drift", () => {
+    const sharedRulesBlocks = roles.map((role) => {
+      const prompt = loadCanonicalPrompt(role);
+      const match = prompt.match(
+        /## Shared review rules\n([\s\S]*?)(?=\n## Finding JSON protocol)/,
+      );
+      expect(match, `${role} 缺少标准的 Shared review rules 段落`).not.toBeNull();
+      return match![1].trim();
+    });
+
+    const first = sharedRulesBlocks[0];
+    for (let i = 1; i < sharedRulesBlocks.length; i++) {
+      expect(sharedRulesBlocks[i]).toBe(first);
+    }
+  });
+
+  it("loads canonical skill successfully with Orchestrator intent and report skeleton contract", () => {
     const skill = loadCanonicalSkill();
     expect(skill.length).toBeGreaterThan(100);
     expect(skill).toContain("# Independent code review");
+    expect(skill).toContain("Code Review Orchestrator");
+    expect(skill).toContain(
+      "NEVER invent technical findings or override specialized reviewers' technical assessments",
+    );
+    expect(skill).toContain("Markdown Report Contract Skeleton");
+    expect(skill).toContain("git status --porcelain");
   });
 
   it.each(["antigravity", "claude-code", "codex"] as const)(
