@@ -57,13 +57,16 @@ export class Doctor {
           `\n   - ${p.name}: ${p.verified ? "verified" : "unverified"}${p.notes ? ` (${p.notes})` : ""}`,
       )
       .join("");
+    const header =
+      unverifiedEntries.length === 0
+        ? "All supported platforms verified in native runtime environments:"
+        : unverifiedEntries.length === platformEntries.length
+          ? "All platforms are currently unverified in native runtime (review quality not validated):"
+          : "Platform verification:";
     checks.push({
       name: "Platform Verification Status",
       status: unverifiedEntries.length > 0 ? "warn" : "pass",
-      message:
-        (unverifiedEntries.length === platformEntries.length
-          ? "All platforms are currently unverified in native runtime (review quality not validated):"
-          : "Platform verification:") + verificationDetails,
+      message: header + verificationDetails,
     });
 
     // Check 3: Global Installation Manifest
