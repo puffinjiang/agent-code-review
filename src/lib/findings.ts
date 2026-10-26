@@ -208,3 +208,74 @@ export function validateFindings(findings: unknown): {
     findings: allErrors.length === 0 ? validFindings : undefined,
   };
 }
+
+export interface VerifierCoverageResult {
+  valid: boolean;
+  errors: string[];
+  unaccountedCandidateIds: string[];
+  duplicateCandidateIds: string[];
+  unknownFindingIds: string[];
+}
+
+/**
+ * 校验 Verifier 输出对候选 ID 集合的完整性覆盖不变式：
+ * 1. 每一个候选 ID 必须作为 finding.id 或在某个 finding.merged_from 中出现且仅出现一次（不可静默丢弃，不可重复统计）；
+ * 2. Verifier 不得凭空铸造不在候选列表中的全新 ID（必须严格继承并保留候选 ID）。
+ */
+export function validateVerifierCoverage(
+  candidateIds: string[],
+  verifierFindings: Finding[],
+): VerifierCoverageResult {
+  const candidateSet = new Set(candidateIds);
+  const seenCandidateIds = new Map<string, number>();
+  const unknownFindingIds: string[] = [];
+  const duplicateCandidateIds: string[] = [];
+  const errors: string[] = [];
+
+  for (const finding of verifierFindings) {
+    const ids = [finding.id, ...(finding.merged_from || [])];
+    for (const id of ids) {
+      if (!candidateSet.has(id)) {
+        if (!unknownFindingIds.includes(id)) {
+          unknownFindingIds.push(id);
+        }
+      }
+      const count = (seenCandidateIds.get(id) || 0) + 1;
+      seenCandidateIds.set(id, count);
+      if (count === 2 && !duplicateCandidateIds.includes(id)) {
+        duplicateCandidateIds.push(id);
+      }
+    }
+  }
+
+  const unaccountedCandidateIds: string[] = [];
+  for (const cid of candidateIds) {
+    if (!seenCandidateIds.has(cid)) {
+      unaccountedCandidateIds.push(cid);
+    }
+  }
+
+  if (unaccountedCandidateIds.length > 0) {
+    errors.push(
+      `Candidate findings unaccounted for without a verdict: ${unaccountedCandidateIds.join(", ")}`,
+    );
+  }
+  if (duplicateCandidateIds.length > 0) {
+    errors.push(
+      `Candidate findings duplicated across verdicts or merged_from: ${duplicateCandidateIds.join(", ")}`,
+    );
+  }
+  if (unknownFindingIds.length > 0) {
+    errors.push(
+      `Verifier minted unknown candidate IDs not present in candidate list: ${unknownFindingIds.join(", ")}`,
+    );
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+    unaccountedCandidateIds,
+    duplicateCandidateIds,
+    unknownFindingIds,
+  };
+}

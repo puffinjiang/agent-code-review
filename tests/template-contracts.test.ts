@@ -174,6 +174,11 @@ describe("Installable reviewer contracts (SSOT dynamic rendering)", () => {
           expect(examples[2].verification.notes).toBeTypeOf("string");
           expect(instructions).toContain("Preserve candidate IDs");
           expect(instructions).toContain("merged_from");
+          expect(instructions).toContain("## Verifier output contract");
+          expect(instructions).toContain("Return one verdict for every candidate");
+          expect(instructions).toContain(
+            "You are the sole role permitted to set CONFIRMED or REJECTED",
+          );
         } else {
           const expectedCategory = role.replace("-reviewer", "");
           expect(examples[0].category).toBe(expectedCategory);
@@ -186,8 +191,13 @@ describe("Installable reviewer contracts (SSOT dynamic rendering)", () => {
           };
           expect(examples[0].id.startsWith(prefixMap[role])).toBe(true);
           expect(examples[0]).not.toHaveProperty("merged_from");
+          expect(instructions).toContain(
+            "If no supported finding exists, your entire response is exactly:\n```\n[]\n```",
+          );
         }
 
+        expect(instructions).toContain("Language convention:");
+        expect(instructions).toContain("architecture is reserved for verifier reclassification");
         expect(instructions).toContain("Internal jobs");
         expect(instructions).toContain("Candidate reviewers always use NEEDS_VERIFICATION");
         expect(instructions).toContain("tests actually ran");
@@ -293,6 +303,9 @@ describe("Installable reviewer contracts (SSOT dynamic rendering)", () => {
       expect(skill, `${platform} 严禁静默丢弃 verifier 未能处理的候选缺陷`).toMatch(
         /Do not silently discard candidates that the verifier could not process/,
       );
+      expect(skill, `${platform} 应要求在报告前校验候选覆盖完整性`).toContain(
+        "Verify completeness before reporting",
+      );
     }
   });
 
@@ -342,9 +355,7 @@ describe("Installable reviewer contracts (SSOT dynamic rendering)", () => {
   it("enforces 100% identical rendered shared review rules across all roles without drift", () => {
     const sharedRulesBlocks = roles.map((role) => {
       const prompt = loadCanonicalPrompt(role);
-      const match = prompt.match(
-        /## Shared review rules\n([\s\S]*?)(?=\n## Finding JSON protocol)/,
-      );
+      const match = prompt.match(/## Shared review rules\n([\s\S]*?)(?=\n## )/);
       expect(match, `${role} 缺少标准的 Shared review rules 段落`).not.toBeNull();
       return match![1].trim();
     });

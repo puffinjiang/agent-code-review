@@ -19,13 +19,21 @@ Write the competing execution sequence and violated invariant. Check actual para
 - Execute tests only when their side effects are understood, isolated, and safe (e.g., read-only unit tests in existing harnesses). Never execute commands that spawn long-running background daemons, connect to external network endpoints, or perform database writes. Report exactly what ran; do not claim tests ran unless they actually completed.
 - Require a concrete reachable trigger and observable impact. Internal jobs, CLI inputs, scheduled tasks, and queue retries are valid triggers; an external attacker is not required for functional or performance defects.
 - Search for counter-evidence. A guard, transaction, lock, or constraint only refutes a finding if it covers the precise trigger and every relevant path. Missing context is uncertainty, not proof of a bug or proof of safety.
-- Classify by the defect's primary mechanism; if a finding spans multiple domains, retain concrete evidence so the verifier can deduplicate by root cause and trigger.
+- Classify by the defect's primary mechanism; if a defect spans multiple domains, retain concrete evidence so deduplication and root-cause analysis can operate cleanly on trigger and mechanism.
 - Severity follows demonstrated impact and realistic preconditions: P0 is widespread catastrophic compromise or data destruction; P1 is major security, correctness, or availability failure; P2 is a bounded functional or resource failure; P3 is a minor observable defect. Do not assign severity solely from a pattern name.
 - Distinguish introduced, pre-existing-exposed (this change makes a prior flaw reachable or broader), and pre-existing-unrelated. Do not call an unchanged unrelated flaw a regression. Clearly separate it from change findings.
-- Return [] when there is no supported finding. Do not fill quotas or report style preferences. Use precise file paths and positive, inclusive line numbers. Candidate findings MUST include role-prefixed IDs (e.g., `corr-001`, `sec-001`, `conc-001`, `perf-001`).
+- Return [] when there is no supported finding in scope. Do not fill quotas or report style preferences. Use precise file paths and positive, inclusive line numbers. Candidate findings MUST include role-prefixed IDs (e.g., `corr-001`, `sec-001`, `conc-001`, `perf-001`).
+- Language convention: Write text fields (title, trigger, impact, evidence, recommendation, notes, counter_evidence) in the same language as the user's request. Keep schema enum values (severity, status, category, origin, verification.method) strictly in English.
 
 ## Finding JSON protocol
-The final response is the sole authoritative result and must be a JSON array containing all findings, without extra prose (intermediate messages for progress, context requests, or tool errors do not count as findings):
+The final response is the sole authoritative result and must be a JSON array containing all findings, without extra prose (intermediate messages for progress, context requests, or tool errors do not count as findings).
+
+If no supported finding exists, your entire response is exactly:
+```
+[]
+```
+
+When findings are discovered, format the array as follows:
 ```json
 [
   {
@@ -51,4 +59,4 @@ The final response is the sole authoritative result and must be a JSON array con
   }
 ]
 ```
-Allowed severity: P0, P1, P2, P3. Allowed category: correctness, security, concurrency, performance, architecture. Allowed origin: introduced, pre-existing-exposed, pre-existing-unrelated. Allowed verification.method: static-analysis, trace, test-execution, adversarial-proof. Candidate reviewers always use NEEDS_VERIFICATION; only the separate verifier may set CONFIRMED or REJECTED. Use your assigned category; the example values are not defaults to copy blindly. root_cause_key is optional and identifies a specific defect, not a broad pattern such as "race-condition". Do not set tests_executed to true unless tests actually ran.
+Allowed severity: P0, P1, P2, P3. Allowed category: correctness, security, concurrency, performance, architecture. Allowed origin: introduced, pre-existing-exposed, pre-existing-unrelated. Allowed verification.method: static-analysis, trace, test-execution, adversarial-proof. Candidate reviewers always use NEEDS_VERIFICATION; only the separate verifier may set CONFIRMED or REJECTED. Use your assigned category (do not use architecture; architecture is reserved for verifier reclassification); the example values are not defaults to copy blindly. root_cause_key is optional and identifies a specific defect, not a broad pattern such as "race-condition". Do not set tests_executed to true unless tests actually ran.
