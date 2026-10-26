@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { type Finding, validateFinding, validateFindings } from "./helpers/findings.js";
+import {
+  type Finding,
+  validateFinding,
+  validateFindings,
+  validateVerifierCoverage,
+} from "./helpers/findings.js";
 
 describe("Findings Schema Validation", () => {
   const validFinding: Finding = {
@@ -124,6 +129,88 @@ describe("Findings Schema Validation", () => {
       expect(res.errors.length).toBeGreaterThan(0);
       expect(res.errors.some((e) => e.includes("corr-002"))).toBe(true);
       expect(res.findings).toBeUndefined();
+    });
+  });
+
+  describe("Verifier Candidate Coverage Invariant", () => {
+    it("should accept 1:1 coverage where all candidates are directly reported", () => {
+      const candidates = ["corr-001", "sec-001"];
+      const findings: Finding[] = [
+        { ...validFinding, id: "corr-001", merged_from: undefined },
+        {
+          ...validFinding,
+          id: "sec-001",
+          status: "REJECTED",
+          verification: {
+            method: "trace",
+            tests_executed: false,
+            counter_evidence: "Guard exists",
+          },
+          merged_from: undefined,
+        },
+      ];
+      const res = validateVerifierCoverage(candidates, findings);
+      expect(res.valid).toBe(true);
+      expect(res.errors).toHaveLength(0);
+      expect(res.unaccountedCandidateIds).toHaveLength(0);
+    });
+
+    it("should accept consolidated coverage via merged_from", () => {
+      const candidates = ["corr-001", "conc-002", "sec-001"];
+      const findings: Finding[] = [
+        { ...validFinding, id: "corr-001", merged_from: ["conc-002"] },
+        {
+          ...validFinding,
+          id: "sec-001",
+          status: "REJECTED",
+          verification: { method: "trace", tests_executed: false, counter_evidence: "Neutralized" },
+          merged_from: undefined,
+        },
+      ];
+      const res = validateVerifierCoverage(candidates, findings);
+      expect(res.valid).toBe(true);
+      expect(res.errors).toHaveLength(0);
+      expect(res.unaccountedCandidateIds).toHaveLength(0);
+    });
+
+    it("should reject when candidate IDs are dropped without a verdict", () => {
+      const candidates = ["corr-001", "sec-001", "perf-001"];
+      const findings: Finding[] = [{ ...validFinding, id: "corr-001", merged_from: undefined }];
+      const res = validateVerifierCoverage(candidates, findings);
+      expect(res.valid).toBe(false);
+      expect(res.unaccountedCandidateIds).toEqual(["sec-001", "perf-001"]);
+      expect(res.errors.some((e) => e.includes("unaccounted for"))).toBe(true);
+    });
+
+    it("should reject duplicate coverage of the same candidate ID", () => {
+      const candidates = ["corr-001", "sec-001"];
+      const findings: Finding[] = [
+        { ...validFinding, id: "corr-001", merged_from: ["sec-001"] },
+        { ...validFinding, id: "sec-001", merged_from: undefined },
+      ];
+      const res = validateVerifierCoverage(candidates, findings);
+      expect(res.valid).toBe(false);
+      expect(res.duplicateCandidateIds).toEqual(["sec-001"]);
+      expect(res.errors.some((e) => e.includes("duplicated"))).toBe(true);
+    });
+
+    it("should reject unknown minted IDs not present in candidate list", () => {
+      const candidates = ["corr-001"];
+      const findings: Finding[] = [
+        { ...validFinding, id: "corr-001", merged_from: undefined },
+        { ...validFinding, id: "minted-999", merged_from: undefined },
+      ];
+      const res = validateVerifierCoverage(candidates, findings);
+      expect(res.valid).toBe(false);
+      expect(res.unknownFindingIds).toEqual(["minted-999"]);
+      expect(res.errors.some((e) => e.includes("unknown candidate ID"))).toBe(true);
+    });
+
+    it("should handle empty candidate list correctly", () => {
+      expect(validateVerifierCoverage([], []).valid).toBe(true);
+      const res = validateVerifierCoverage([], [{ ...validFinding, merged_from: undefined }]);
+      expect(res.valid).toBe(false);
+      expect(res.unknownFindingIds).toEqual(["corr-001"]);
     });
   });
 });

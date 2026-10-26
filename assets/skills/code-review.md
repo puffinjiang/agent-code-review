@@ -29,6 +29,7 @@ Pass all candidate findings without pre-filtering, the original scope/patch, and
 - Require an independent source trace and a search for guards, constraints, locks, transactions, and upstream contracts. Internal scheduled jobs and consumers are valid trigger paths. Missing context yields NEEDS_VERIFICATION, not automatic confirmation or rejection.
 - Consolidation: Merge only when the root cause and trigger are established to be the same. Nearby or overlapping lines and generic labels are insufficient. Retain different triggers and file locations separately. Preserve evidence, use the highest supported severity, retain the primary candidate ID, and record other candidate IDs in `merged_from`.
 - Distinguish introduced, pre-existing-exposed, and pre-existing-unrelated; label unrelated pre-existing issues separately from regressions. Do not silently discard candidates that the verifier could not process.
+- Verify completeness before reporting: every candidate ID must appear exactly once in the verifier's output, either as a finding's own `id` or inside another finding's `merged_from`. If any candidate is missing, treat the verifier's output as incomplete and re-dispatch the missing candidates instead of reporting a partial result (programmatic environments can use the exported `validateVerifierCoverage` helper to enforce this invariant).
 
 ## Report honestly
 Report mode, scope, timestamp, reviewed file count, confirmed counts with P0-P3 breakdown, pending verification count, and rejected count. Include:
