@@ -72,31 +72,50 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22.x
-          registry-url: "https://registry.npmjs.org"
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Sync package version from Tag
+      - name: Validate and sync package version from Tag
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          echo "Syncing package.json version to $VERSION from tag $GITHUB_REF_NAME"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Tag '$GITHUB_REF_NAME' is not a valid Semantic Version (expected format: v1.2.3)"
+            exit 1
+          fi
+          CURRENT_VER=$(node -p "require('./package.json').version")
+          if [ "$CURRENT_VER" = "$VERSION" ]; then
+            echo "::notice::Tag version matches package.json ($VERSION)."
+          else
+            echo "::warning::Tag version ($VERSION) differs from package.json ($CURRENT_VER). CI will sync package.json to $VERSION for this release."
+          fi
           npm version "$VERSION" --no-git-tag-version --allow-same-version
 
       - name: Build bundle and verify assets
         run: npm run verify-assets
 
-      - name: Verify npm auth token
-        run: |
-          if [ -z "${{ secrets.NPM_TOKEN }}" ]; then
-            echo "::error::NPM_TOKEN secret is not configured in repository settings."
-            exit 1
-          fi
+      # npm >= 11.5.1 is required for OIDC trusted publishing; the npm bundled with
+      # node-version 22.x is 10.x, so upgrade it explicitly before publishing.
+      - name: Upgrade npm for trusted publishing
+        run: npm install -g 'npm@^11.5.1'
 
       - name: Publish to npm
         run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Verify package is live on npm registry
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "Verifying agent-code-review@$VERSION is accessible on npm registry..."
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            if PUBLISHED=$(npm view "agent-code-review@$VERSION" version 2>/dev/null); then
+              echo "✅ Verified: agent-code-review@$PUBLISHED is live on npm (confirmed on attempt $i)."
+              exit 0
+            fi
+            echo "Attempt $i: agent-code-review@$VERSION not visible yet; retrying in 6s..."
+            sleep 6
+          done
+          echo "::error::agent-code-review@$VERSION was not visible on npm after 60s."
+          exit 1
 
       - name: Create or update GitHub Release
         run: |
