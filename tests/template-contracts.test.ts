@@ -328,6 +328,46 @@ describe("Installable reviewer contracts (SSOT dynamic rendering)", () => {
     }
   });
 
+  it.each(["antigravity", "claude-code", "codex"] as const)(
+    "reports integrity relative to the initial working tree in %s output",
+    (platform) => {
+      const skillFile = getAdapter(platform)
+        .getTemplateFiles({ isGlobal: true })
+        .find((file) => file.relativePath.endsWith("skills/code-review/SKILL.md"));
+      if (!skillFile) throw new Error(`Missing ${platform} review skill`);
+      const skill = skillFile.sourceContent;
+      expect(skill).not.toContain("verified clean");
+      expect(skill).toContain("Working Tree Before Review");
+      expect(skill).toContain("Working Tree After Review");
+      expect(skill).toContain("unchanged from baseline | changes detected | not fully verified");
+      expect(skill).toContain("pre-existing edits are not review side effects");
+      expect(skill).toContain(
+        "Matching porcelain path statuses alone do not prove unchanged content",
+      );
+      expect(skill).toContain("including already-modified and untracked files");
+    },
+  );
+
+  it.each(["antigravity", "claude-code", "codex"] as const)(
+    "carries configuration-aware Git safety rules into every %s agent and skill",
+    (platform) => {
+      for (const file of getAdapter(platform).getTemplateFiles({ isGlobal: true })) {
+        const instructions = file.relativePath.endsWith(".toml")
+          ? (parse(file.sourceContent).developer_instructions as string)
+          : file.sourceContent;
+        expect(instructions).toContain(
+          "subcommand name alone does not guarantee read-only execution",
+        );
+        expect(instructions).toContain("--no-ext-diff --no-textconv");
+        expect(instructions).toContain("-c core.fsmonitor=false");
+        expect(instructions).toContain("--no-pager");
+        expect(instructions).toContain("untrusted `.git/config`");
+        expect(instructions).toContain("report the coverage limitation");
+        expect(instructions).toContain("not every Git execution path or configuration");
+      }
+    },
+  );
+
   // ---- 资产寻址与 SSOT 防护（方案 F）----
 
   it("locates the canonical assets root directory accurately", () => {
@@ -375,7 +415,7 @@ describe("Installable reviewer contracts (SSOT dynamic rendering)", () => {
       "NEVER invent technical findings or override specialized reviewers' technical assessments",
     );
     expect(skill).toContain("Markdown Report Contract Skeleton");
-    expect(skill).toContain("git status --porcelain");
+    expect(skill).toContain("git --no-pager -c core.fsmonitor=false status --porcelain");
   });
 
   it.each(["antigravity", "claude-code", "codex"] as const)(
