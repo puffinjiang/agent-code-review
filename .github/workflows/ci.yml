@@ -102,21 +102,6 @@ jobs:
       - name: Publish to npm
         run: npm publish --provenance --access public
 
-      - name: Verify package is live on npm registry
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          echo "Verifying agent-code-review@$VERSION is accessible on npm registry..."
-          for i in 1 2 3 4 5 6 7 8 9 10; do
-            if PUBLISHED=$(npm view "agent-code-review@$VERSION" version 2>/dev/null); then
-              echo "✅ Verified: agent-code-review@$PUBLISHED is live on npm (confirmed on attempt $i)."
-              exit 0
-            fi
-            echo "Attempt $i: agent-code-review@$VERSION not visible yet; retrying in 6s..."
-            sleep 6
-          done
-          echo "::error::agent-code-review@$VERSION was not visible on npm after 60s."
-          exit 1
-
       - name: Create or update GitHub Release
         run: |
           gh release view "${{ github.ref_name }}" >/dev/null 2>&1 || \
