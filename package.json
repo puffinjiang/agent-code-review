@@ -1,6 +1,6 @@
 {
   "name": "agent-code-review",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "An open-source multi-agent code review framework for AI coding agents.",
   "type": "module",
   "bin": {
