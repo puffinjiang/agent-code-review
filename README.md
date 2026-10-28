@@ -167,6 +167,10 @@ _Cosmetic linting, formatting, and naming preferences are strictly filtered out 
 
 ## 🔒 Default Read-Only Guarantee
 
+Review queries disable Git's configured fsmonitor helper with the command-local `-c core.fsmonitor=false` override. This prevents external monitor execution even when the helper works correctly; it is an execution-isolation measure, not a workaround for a broken local configuration. Trusted day-to-day Git operations do not need to disable fsmonitor. The override does not change persisted Git configuration, but queries may require more filesystem scanning.
+
+Diff/show queries also disable external diff and textconv. These restrictions cover specific helper mechanisms, not every Git execution path or untrusted configuration; the prompt rules guide the host agent, while the CLI Scope Resolver enforces the corresponding command arguments.
+
 The review framework operates in a **strictly read-only mode** during review:
 - Does NOT alter your business code.
 - Does NOT execute `git commit`, `git push`, or `git reset`.

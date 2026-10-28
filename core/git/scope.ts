@@ -40,8 +40,19 @@ export class GitScopeResolver {
     maxBuffer = DEFAULT_GIT_MAX_BUFFER,
   ): string {
     const execCwd = runInRepoRoot && this.repoRoot ? this.repoRoot : this.cwd;
+    const [command, ...commandArgs] = args;
+    // Review queries must not invoke configuration-driven diff/text conversion
+    // or filesystem-monitor helpers. These overrides do not sandbox all Git config.
+    const safeArgs = [
+      "--no-pager",
+      "-c",
+      "core.fsmonitor=false",
+      command,
+      ...(["diff", "show"].includes(command) ? ["--no-ext-diff", "--no-textconv"] : []),
+      ...commandArgs,
+    ];
     try {
-      return execFileSync("git", args, {
+      return execFileSync("git", safeArgs, {
         cwd: execCwd,
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "pipe"],

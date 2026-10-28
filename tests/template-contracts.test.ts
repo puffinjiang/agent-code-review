@@ -191,19 +191,18 @@ describe("Installable reviewer contracts (SSOT dynamic rendering)", () => {
           };
           expect(examples[0].id.startsWith(prefixMap[role])).toBe(true);
           expect(examples[0]).not.toHaveProperty("merged_from");
-          expect(instructions).toContain(
-            "If no supported finding exists, your entire response is exactly:\n```\n[]\n```",
-          );
+          expect(instructions).toMatch(/\b[Rr]eturn \[\]/);
+          expect(instructions).not.toContain("CONFIRMED");
+          expect(instructions).not.toContain("REJECTED");
+          for (const otherRole of roles.filter((other) => other !== role)) {
+            expect(instructions).not.toContain(otherRole);
+          }
         }
 
-        expect(instructions).toContain("Language convention:");
-        expect(instructions).toContain("architecture is reserved for verifier reclassification");
-        expect(instructions).toContain("Internal jobs");
-        expect(instructions).toContain("Candidate reviewers always use NEEDS_VERIFICATION");
         expect(instructions).toContain("tests actually ran");
-        expect(instructions).toContain("primary mechanism");
-        expect(instructions).toContain("final response is the sole authoritative result");
         expect(instructions).toContain("intermediate messages");
+        expect(instructions).toMatch(/user's language/);
+        expect(instructions).not.toMatch(/^## (?:Shared review rules|Review rules)$/m);
         expect(instructions).not.toContain("reachable by an external caller or malicious actor");
       }
     },
@@ -245,6 +244,7 @@ describe("Installable reviewer contracts (SSOT dynamic rendering)", () => {
 
       const skill = skillFile!.sourceContent;
       expect(skill).toContain("Launch each selected reviewer as an independent native subagent");
+      expect(skill).toContain("not as personas in one context");
       expect(skill).toContain("separate findings-verifier");
       expect(skill).toContain("single-agent fallback must be labeled");
       expect(skill).toContain("Quick: correctness-reviewer only");
@@ -328,6 +328,54 @@ describe("Installable reviewer contracts (SSOT dynamic rendering)", () => {
     }
   });
 
+  it.each(["antigravity", "claude-code", "codex"] as const)(
+    "reports integrity relative to the initial working tree in %s output",
+    (platform) => {
+      const skillFile = getAdapter(platform)
+        .getTemplateFiles({ isGlobal: true })
+        .find((file) => file.relativePath.endsWith("skills/code-review/SKILL.md"));
+      if (!skillFile) throw new Error(`Missing ${platform} review skill`);
+      const skill = skillFile.sourceContent;
+      expect(skill).not.toContain("verified clean");
+      expect(skill).toContain("Working Tree Before Review");
+      expect(skill).toContain("Working Tree After Review");
+      expect(skill).toContain("unchanged from baseline | changes detected | not fully verified");
+      expect(skill).toContain("Preserve pre-existing edits");
+      expect(skill).toContain("captured file contents/hashes with the baseline");
+      expect(skill).toContain("not just porcelain path statuses");
+      expect(skill).toContain("including already-modified and untracked files");
+    },
+  );
+
+  it.each(["antigravity", "claude-code", "codex"] as const)(
+    "carries configuration-aware Git safety rules into every %s agent and skill",
+    (platform) => {
+      for (const file of getAdapter(platform).getTemplateFiles({ isGlobal: true })) {
+        const instructions = file.relativePath.endsWith(".toml")
+          ? (parse(file.sourceContent).developer_instructions as string)
+          : file.sourceContent;
+        expect(instructions).toMatch(
+          /Before (?:the first Git query|Git queries)|For Git queries, inspect/,
+        );
+        expect(instructions).toContain("do not execute configured helpers");
+        expect(instructions).toContain("--no-ext-diff --no-textconv");
+        expect(instructions).toContain("-c core.fsmonitor=false");
+        expect(instructions).toContain("--no-pager");
+        expect(instructions).toContain("untrusted `.git/config`");
+        expect(instructions).toContain("report the coverage limitation");
+        expect(instructions).toContain("Never modify on-disk Git configuration");
+        if (!file.relativePath.endsWith("skills/code-review/SKILL.md")) {
+          expect(instructions).toContain(
+            "Use only read-only Git queries: diff, show, ls-files, log, status, rev-parse, rev-list, and merge-base",
+          );
+          expect(instructions).toContain(
+            "Never run commands that modify repository files or Git state",
+          );
+        }
+      }
+    },
+  );
+
   // ---- 资产寻址与 SSOT 防护（方案 F）----
 
   it("locates the canonical assets root directory accurately", () => {
@@ -349,21 +397,21 @@ describe("Installable reviewer contracts (SSOT dynamic rendering)", () => {
   it.each(roles)("loads canonical prompt for %s successfully", (role) => {
     const prompt = loadCanonicalPrompt(role);
     expect(prompt.length).toBeGreaterThan(100);
-    expect(prompt).toContain("## Shared review rules");
+    expect(prompt).toMatch(/^# .+\n\n/);
   });
 
-  it("enforces 100% identical rendered shared review rules across all roles without drift", () => {
-    const sharedRulesBlocks = roles.map((role) => {
-      const prompt = loadCanonicalPrompt(role);
-      const match = prompt.match(/## Shared review rules\n([\s\S]*?)(?=\n## )/);
-      expect(match, `${role} 缺少标准的 Shared review rules 段落`).not.toBeNull();
-      return match![1].trim();
-    });
-
-    const first = sharedRulesBlocks[0];
-    for (let i = 1; i < sharedRulesBlocks.length; i++) {
-      expect(sharedRulesBlocks[i]).toBe(first);
-    }
+  it.each([
+    ["correctness-reviewer", "## Establish the expected behavior", "expected and actual behavior"],
+    ["security-reviewer", "## Build the attack path", "actor's existing privileges"],
+    ["concurrency-reviewer", "## Construct the schedule", "shared state and its invariant"],
+    ["performance-reviewer", "## Build the cost model", "input size, frequency, concurrency"],
+    ["findings-verifier", "## Decide", "Return one verdict for every candidate"],
+  ] as const)("gives %s its own evidence-producing workflow", (role, heading, evidence) => {
+    const prompt = loadCanonicalPrompt(role);
+    expect(prompt).toContain(heading);
+    expect(prompt).toContain(evidence);
+    expect(prompt).not.toContain("## Shared review rules");
+    expect(prompt).not.toContain("## Review rules");
   });
 
   it("loads canonical skill successfully with Orchestrator intent and report skeleton contract", () => {
@@ -375,7 +423,7 @@ describe("Installable reviewer contracts (SSOT dynamic rendering)", () => {
       "NEVER invent technical findings or override specialized reviewers' technical assessments",
     );
     expect(skill).toContain("Markdown Report Contract Skeleton");
-    expect(skill).toContain("git status --porcelain");
+    expect(skill).toContain("git --no-pager -c core.fsmonitor=false status --porcelain");
   });
 
   it.each(["antigravity", "claude-code", "codex"] as const)(
