@@ -24,7 +24,10 @@ describe("Documented and CLI Git query safeguards", () => {
   beforeEach(() => {
     directory = fs.mkdtempSync(path.join(os.tmpdir(), "acr-prompt-git-"));
     marker = path.join(directory, "helper-executed");
-    environment = { ...process.env, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: os.devNull };
+    // Git expects a config file path; Node's Windows null-device path is not portable here.
+    const globalConfig = path.join(directory, "empty.gitconfig");
+    fs.writeFileSync(globalConfig, "");
+    environment = { ...process.env, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: globalConfig };
     for (const key of Object.keys(environment)) {
       if (
         [
@@ -44,7 +47,7 @@ describe("Documented and CLI Git query safeguards", () => {
     // The resolver inherits the test process environment, so isolate it using
     // the same environment as the fixture Git invocations.
     vi.stubEnv("GIT_CONFIG_NOSYSTEM", "1");
-    vi.stubEnv("GIT_CONFIG_GLOBAL", os.devNull);
+    vi.stubEnv("GIT_CONFIG_GLOBAL", globalConfig);
     for (const key of Object.keys(process.env)) {
       if (!(key in environment)) vi.stubEnv(key, undefined);
     }
