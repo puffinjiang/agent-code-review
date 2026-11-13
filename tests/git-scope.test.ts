@@ -38,8 +38,7 @@ describe("Git Scope Resolver", () => {
     const resolver = new GitScopeResolver(tempDir);
     expect(resolver.isGitRepo()).toBe(true);
 
-    expect(new GitScopeResolver(os.tmpdir()).isGitRepo()).toBeTypeOf("boolean");
-    // tmpdir might or might not be in git, but a non-existent dir won't be
+    // Non-existent directories outside any repository must not be treated as Git repos
     const dummyDir = path.join(tempDir, "sub-not-created");
     const nonGitResolver2 = new GitScopeResolver(dummyDir);
     expect(nonGitResolver2.isGitRepo()).toBe(false);
@@ -100,7 +99,6 @@ describe("Git Scope Resolver", () => {
     git("commit", "-m", "feat: feature file");
 
     // Switch back to master/main
-    git("branch", "--show-current");
     git("checkout", "-");
     fs.writeFileSync(path.join(tempDir, "main.txt"), "from main branch");
     git("add", "main.txt");

@@ -9,7 +9,7 @@ import {
   resolveAssetsRoot,
 } from "../adapters/assets-root.js";
 import { getAdapter, renderCodexAgent } from "../adapters/index.js";
-import { validateFinding } from "./helpers/findings.js";
+import { validateFinding } from "../src/lib/findings.js";
 
 const roles = [
   "correctness-reviewer",

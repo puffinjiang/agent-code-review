@@ -4,7 +4,7 @@ import {
   validateFinding,
   validateFindings,
   validateVerifierCoverage,
-} from "./helpers/findings.js";
+} from "../src/lib/findings.js";
 
 describe("Findings Schema Validation", () => {
   const validFinding: Finding = {
