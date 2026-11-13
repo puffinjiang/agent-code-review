@@ -27,7 +27,6 @@ interface LockIdentity {
 }
 
 interface OpenedLockFile {
-  fd: number;
   stat: fs.Stats;
   data: LockData | null;
   identity: LockIdentity;
@@ -205,20 +204,20 @@ export class ProcessLock {
       const content = fs.readFileSync(fd, "utf-8");
       const data = this.parseLockContent(content);
       return {
-        fd,
         stat,
         data,
         identity: { dev: stat.dev, ino: stat.ino },
       };
     } catch (readErr: unknown) {
-      try {
-        fs.closeSync(fd);
-      } catch {}
       const code = (readErr as NodeJS.ErrnoException).code;
       if (code === "EACCES" || code === "EPERM") {
         throw this.createPermissionError(filePath, code);
       }
       throw readErr;
+    } finally {
+      try {
+        fs.closeSync(fd);
+      } catch {}
     }
   }
 
@@ -249,6 +248,12 @@ export class ProcessLock {
       const identity: LockIdentity = { dev: stat.dev, ino: stat.ino };
       fs.closeSync(fd);
       fd = null;
+
+      // Windows MoveFileExW(..., MOVEFILE_REPLACE_EXISTING) 允许目录直接覆盖已存在的普通文件，
+      // 会悄然抹掉外来文件或旧单文件锁；发布前确认目标路径尚不存在（POSIX 亦提前跳过无效 rename）。
+      if (this.pathExistsViaLstat(lockPath)) {
+        return null;
+      }
 
       try {
         fs.renameSync(tmpDir, lockPath);
@@ -314,34 +319,28 @@ export class ProcessLock {
     const opened = this.readOpenedLock(lockPath);
     if (!opened) return;
 
-    try {
-      if (
-        expectedIdentity &&
-        expectedIdentity.ino > 0 &&
-        !this.sameFileIdentity(opened.stat, expectedIdentity)
-      ) {
-        return;
-      }
-      const matches =
-        expectedToken === null
-          ? opened.stat.size === 0
-          : opened.data !== null && opened.data.token === expectedToken;
-      if (!matches) return;
-
-      const confirmStat = fs.lstatSync(lockPath);
-      if (confirmStat.isSymbolicLink() || !confirmStat.isFile()) return;
-      const sameTarget =
-        opened.stat.ino > 0
-          ? this.sameFileIdentity(confirmStat, opened.stat)
-          : confirmStat.size === opened.stat.size && confirmStat.mtimeMs === opened.stat.mtimeMs;
-      if (!sameTarget) return;
-
-      fs.unlinkSync(lockPath);
-    } finally {
-      try {
-        fs.closeSync(opened.fd);
-      } catch {}
+    if (
+      expectedIdentity &&
+      expectedIdentity.ino > 0 &&
+      !this.sameFileIdentity(opened.stat, expectedIdentity)
+    ) {
+      return;
     }
+    const matches =
+      expectedToken === null
+        ? opened.stat.size === 0
+        : opened.data !== null && opened.data.token === expectedToken;
+    if (!matches) return;
+
+    const confirmStat = fs.lstatSync(lockPath);
+    if (confirmStat.isSymbolicLink() || !confirmStat.isFile()) return;
+    const sameTarget =
+      opened.stat.ino > 0
+        ? this.sameFileIdentity(confirmStat, opened.stat)
+        : confirmStat.size === opened.stat.size && confirmStat.mtimeMs === opened.stat.mtimeMs;
+    if (!sameTarget) return;
+
+    fs.unlinkSync(lockPath);
   }
 
   /**
@@ -360,27 +359,20 @@ export class ProcessLock {
     const opened = this.readOpenedLock(ownerPath);
     if (!opened) return;
 
-    let shouldUnlink = false;
-    try {
-      const currentDirStat = fs.lstatSync(lockPath);
-      if (currentDirStat.isSymbolicLink() || !currentDirStat.isDirectory()) return;
+    const currentDirStat = fs.lstatSync(lockPath);
+    if (currentDirStat.isSymbolicLink() || !currentDirStat.isDirectory()) return;
 
-      if (
-        expectedIdentity &&
-        expectedIdentity.ino > 0 &&
-        !this.sameFileIdentity(opened.stat, expectedIdentity)
-      ) {
-        return;
-      }
-      shouldUnlink =
-        expectedToken === null
-          ? opened.stat.size === 0
-          : opened.data !== null && opened.data.token === expectedToken;
-    } finally {
-      try {
-        fs.closeSync(opened.fd);
-      } catch {}
+    if (
+      expectedIdentity &&
+      expectedIdentity.ino > 0 &&
+      !this.sameFileIdentity(opened.stat, expectedIdentity)
+    ) {
+      return;
     }
+    const shouldUnlink =
+      expectedToken === null
+        ? opened.stat.size === 0
+        : opened.data !== null && opened.data.token === expectedToken;
 
     if (!shouldUnlink) return;
 
@@ -474,35 +466,29 @@ export class ProcessLock {
       // 兼容历史单文件格式与外来文件保护：非本工具格式坚决拒绝覆盖；已死亡或遗留空文件安全清理
       const opened = this.readOpenedLock(lockPath);
       if (!opened) return { retryImmediately: true, notified };
-      try {
-        const { stat, data, identity } = opened;
-        const age = Date.now() - stat.mtimeMs;
-        if (!data) {
-          if (stat.size === 0 && age > 500) {
-            this.unlinkLegacyFileIfVerified(lockPath, null, identity);
-            return { retryImmediately: true, notified };
-          }
-          if (stat.size > 0) {
-            throw new Error(
-              `Lock path '${lockPath}' contains an invalid or foreign file. Refusing to overwrite.\n` +
-                `   若确认为本工具遗留的残留，可删除后重试: rm "${lockPath}"`,
-            );
-          }
-          return { retryImmediately: false, notified };
-        }
-        if (!this.isPidAlive(data.pid)) {
-          this.unlinkLegacyFileIfVerified(lockPath, data.token, identity);
+      const { stat, data, identity } = opened;
+      const age = Date.now() - stat.mtimeMs;
+      if (!data) {
+        if (stat.size === 0 && age > 500) {
+          this.unlinkLegacyFileIfVerified(lockPath, null, identity);
           return { retryImmediately: true, notified };
         }
-        return {
-          retryImmediately: false,
-          notified: this.notifyContention(lockPath, data, startTime, notified),
-        };
-      } finally {
-        try {
-          fs.closeSync(opened.fd);
-        } catch {}
+        if (stat.size > 0) {
+          throw new Error(
+            `Lock path '${lockPath}' contains an invalid or foreign file. Refusing to overwrite.\n` +
+              `   若确认为本工具遗留的残留，可删除后重试: rm "${lockPath}"`,
+          );
+        }
+        return { retryImmediately: false, notified };
       }
+      if (!this.isPidAlive(data.pid)) {
+        this.unlinkLegacyFileIfVerified(lockPath, data.token, identity);
+        return { retryImmediately: true, notified };
+      }
+      return {
+        retryImmediately: false,
+        notified: this.notifyContention(lockPath, data, startTime, notified),
+      };
     }
 
     if (!existingStat.isDirectory()) {
@@ -540,39 +526,33 @@ export class ProcessLock {
     const ownerFile = entries[0];
     const opened = this.readOpenedLock(path.join(lockPath, ownerFile));
     if (!opened) return { retryImmediately: true, notified };
-    try {
-      const { stat, data, identity } = opened;
-      const validData = data && this.safeOwnerFileName(data.token) === ownerFile ? data : null;
-      const age = Date.now() - stat.mtimeMs;
+    const { stat, data, identity } = opened;
+    const validData = data && this.safeOwnerFileName(data.token) === ownerFile ? data : null;
+    const age = Date.now() - stat.mtimeMs;
 
-      if (!validData) {
-        if (stat.size === 0 && age > 500) {
-          this.releaseOwnerEntry(lockPath, ownerFile, null, identity);
-          return { retryImmediately: true, notified };
-        }
-        if (stat.size > 0 || data !== null) {
-          throw new Error(
-            `Lock path '${lockPath}' contains an invalid or foreign file. Refusing to overwrite.\n` +
-              `   若确认为本工具遗留的残留，可确认安全后删除重试: rm -rf "${lockPath}"`,
-          );
-        }
-        return { retryImmediately: false, notified };
-      }
-
-      if (!this.isPidAlive(validData.pid)) {
-        this.reclaim(lockPath, validData.token, identity);
+    if (!validData) {
+      if (stat.size === 0 && age > 500) {
+        this.releaseOwnerEntry(lockPath, ownerFile, null, identity);
         return { retryImmediately: true, notified };
       }
-
-      return {
-        retryImmediately: false,
-        notified: this.notifyContention(lockPath, validData, startTime, notified),
-      };
-    } finally {
-      try {
-        fs.closeSync(opened.fd);
-      } catch {}
+      if (stat.size > 0 || data !== null) {
+        throw new Error(
+          `Lock path '${lockPath}' contains an invalid or foreign file. Refusing to overwrite.\n` +
+            `   若确认为本工具遗留的残留，可确认安全后删除重试: rm -rf "${lockPath}"`,
+        );
+      }
+      return { retryImmediately: false, notified };
     }
+
+    if (!this.isPidAlive(validData.pid)) {
+      this.reclaim(lockPath, validData.token, identity);
+      return { retryImmediately: true, notified };
+    }
+
+    return {
+      retryImmediately: false,
+      notified: this.notifyContention(lockPath, validData, startTime, notified),
+    };
   }
 
   private static inspectDiagnosticData(lockPath: string): LockData | null {
@@ -584,27 +564,14 @@ export class ProcessLock {
         if (entries.length !== 1 || !this.isOwnerFileName(entries[0])) return null;
         const opened = this.readOpenedLock(path.join(lockPath, entries[0]));
         if (!opened) return null;
-        try {
-          if (opened.data && this.safeOwnerFileName(opened.data.token) === entries[0]) {
-            return opened.data;
-          }
-          return null;
-        } finally {
-          try {
-            fs.closeSync(opened.fd);
-          } catch {}
+        if (opened.data && this.safeOwnerFileName(opened.data.token) === entries[0]) {
+          return opened.data;
         }
+        return null;
       }
       if (stat.isFile()) {
         const opened = this.readOpenedLock(lockPath);
-        if (!opened) return null;
-        try {
-          return opened.data;
-        } finally {
-          try {
-            fs.closeSync(opened.fd);
-          } catch {}
-        }
+        return opened ? opened.data : null;
       }
     } catch {
       // 忽略超时诊断阶段的读取异常，降级显示通用被占用提示
@@ -624,24 +591,28 @@ export class ProcessLock {
     if (!fs.existsSync(baseDir)) fs.mkdirSync(baseDir, { recursive: true });
 
     while (Date.now() - startTime < timeoutMs) {
-      // 1. 检查是否存在符号链接攻击
+      // 1. 检查是否存在符号链接攻击或已存在目标（Windows renameSync(dir, existingFile) 会覆盖普通文件）
+      let targetExists = false;
       try {
         const stat = fs.lstatSync(lockPath);
         if (stat.isSymbolicLink()) {
           throw new Error(`Refusing symbolic link at lock path: ${lockPath}`);
         }
+        targetExists = true;
       } catch (err: unknown) {
         if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
       }
 
-      // 2. 尝试原子发布目录锁（临时目录预写入 owner-<token>.json 后 renameSync）
-      try {
-        const identity = this.tryCreate(lockPath, { pid: process.pid, token, time: Date.now() });
-        if (identity) {
-          return () => this.release(lockPath, token, identity);
+      if (!targetExists) {
+        // 2. 尝试原子发布目录锁（临时目录预写入 owner-<token>.json 后 renameSync）
+        try {
+          const identity = this.tryCreate(lockPath, { pid: process.pid, token, time: Date.now() });
+          if (identity) {
+            return () => this.release(lockPath, token, identity);
+          }
+        } catch (err: unknown) {
+          throw new Error(`获取安装锁失败: ${(err as Error).message}`);
         }
-      } catch (err: unknown) {
-        throw new Error(`获取安装锁失败: ${(err as Error).message}`);
       }
 
       // 3. 锁已存在：检查目录/遗留文件状态并在仅限死亡进程时安全回收
