@@ -167,6 +167,22 @@ describe("ProcessLock Unit Tests", () => {
     expect(readActiveOwner(lockPath).data.token).toBe(agedToken);
   });
 
+  it("should never overwrite or preempt a live legacy single-file lock", () => {
+    const lockPath = ProcessLock.getLockPath(tempDir);
+    const legacyPayload = JSON.stringify({
+      pid: process.pid,
+      token: "legacy-live-token",
+      time: Date.now(),
+    });
+    fs.writeFileSync(lockPath, legacyPayload, "utf-8");
+
+    expect(() => ProcessLock.acquire(tempDir, { timeoutMs: 150, retryIntervalMs: 25 })).toThrow(
+      /获取安装锁超时/,
+    );
+    expect(fs.lstatSync(lockPath).isFile()).toBe(true);
+    expect(fs.readFileSync(lockPath, "utf-8")).toBe(legacyPayload);
+  });
+
   it("should print holding notification to stderr if waiting exceeds 300ms", async () => {
     const releaseA = ProcessLock.acquire(tempDir);
     const stderrSpy: string[] = [];
