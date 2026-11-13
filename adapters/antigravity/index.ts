@@ -3,14 +3,14 @@ import * as path from "node:path";
 import { loadCanonicalPrompt, loadCanonicalSkill } from "../assets-root.js";
 import { toPosixRelativePath } from "../normalize-path.js";
 import { renderAntigravityAgent, renderAntigravitySkill } from "../render.js";
-import { type AdapterOptions, REVIEWER_ROLES, type TemplateFile } from "../types.js";
+import { type AdapterOptions, PLATFORMS, REVIEWER_ROLES, type TemplateFile } from "../types.js";
 
 export type { TemplateFile } from "../types.js";
 
 export class AntigravityAdapter {
   public static readonly platformId = "antigravity";
   public static readonly platformName = "Google Antigravity";
-  public static readonly verified = false;
+  public static readonly verified = PLATFORMS.antigravity.verified;
 
   public static getTemplateFiles(options: AdapterOptions = {}): TemplateFile[] {
     const isGlobal = options.isGlobal !== false; // Global by default

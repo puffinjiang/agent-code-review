@@ -8,7 +8,7 @@ import {
   loadCanonicalSkill,
   resolveAssetsRoot,
 } from "../adapters/assets-root.js";
-import { getAdapter } from "../adapters/index.js";
+import { getAdapter, renderCodexAgent } from "../adapters/index.js";
 import { validateFinding } from "./helpers/findings.js";
 
 const roles = [
@@ -81,6 +81,23 @@ describe("Installable reviewer contracts (SSOT dynamic rendering)", () => {
     expect(agent.developer_instructions).toBeTypeOf("string");
     expect(agent).not.toHaveProperty("instructions");
     expect(agent).not.toHaveProperty("model"); // inherit a usable session model
+  });
+
+  it("escapes backslashes, triple quotes, trailing quotes, and control characters losslessly in renderCodexAgent", () => {
+    const samples = [
+      String.raw`Windows path C:\Users\dev\repo and regex \d+\.\w+`,
+      'Contains """triple quotes""" and """"quad quotes"""" inside',
+      'Ends with one trailing quote"',
+      'Ends with two trailing quotes""',
+      'Ends with three trailing quotes"""',
+      "Includes\ttab,\r\ncrlf,\bbackspace,\fformfeed,\x00nul",
+    ];
+    for (const body of samples) {
+      const toml = renderCodexAgent("correctness-reviewer", body);
+      const parsed = parse(toml);
+      expect(parsed.name).toBe("correctness_reviewer");
+      expect(parsed.developer_instructions).toBe(body);
+    }
   });
 
   it.each(roles)("provides required Claude frontmatter: %s", (role) => {

@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import { runDoctor } from "./commands/doctor.js";
-import { runInit } from "./commands/init.js";
+import { runInit, runUpdate } from "./commands/init.js";
 import { runScope } from "./commands/scope.js";
 import { runUninstall } from "./commands/uninstall.js";
 import { getPackageVersion } from "./lib/version.js";
@@ -38,10 +38,11 @@ program
   .description("Update Agent Code Review configuration to latest version")
   .option("-g, --global", "Update user global Agent configuration (Default)", true)
   .option("-l, --local", "Update current project workspace configuration")
+  .option("-p, --platform <platform>", "Target platform (antigravity, claude-code, codex, or all)")
   .option("-d, --dry-run", "Preview updates without writing to disk")
   .option("-f, --force", "Force update even if local changes exist")
   .action((options) => {
-    const code = runInit({ ...options, force: options.force });
+    const code = runUpdate(options);
     process.exit(code);
   });
 

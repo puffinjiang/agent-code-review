@@ -77,11 +77,11 @@ export class Uninstaller {
   public execute(): UninstallResult {
     const baseDir = this.getBaseDir();
 
-    if (this.dryRun) {
-      return this.executeInternal(baseDir);
-    }
-
     try {
+      if (this.dryRun) {
+        return ProcessLock.withInspectionLock(baseDir, () => this.executeInternal(baseDir));
+      }
+
       return ProcessLock.withLock(baseDir, () => {
         return this.executeInternal(baseDir);
       });
@@ -91,7 +91,7 @@ export class Uninstaller {
         scope: this.scope,
         baseDir,
         success: false,
-        dryRun: false,
+        dryRun: this.dryRun,
         removedFiles: [],
         skippedFiles: [],
         manualCleanup: [],
@@ -129,40 +129,62 @@ export class Uninstaller {
       try {
         if (entry.path === ".agent-code-review.json")
           throw new Error("The manifest is not a managed content file.");
-        const fullPath = resolveManagedPath(baseDir, entry.path);
-        if (!fs.existsSync(fullPath)) continue;
-        const content = fs.readFileSync(fullPath, "utf-8");
-        const modified = ManifestManager.computeHash(content) !== entry.hash;
         if (entry.path === LEGACY_SHARED_CONFIG) {
           // 旧版本曾把用户的 .codex/config.toml 当作受管文件整份覆写。
-          // 卸载器永不写入或删除用户配置：这段注册块在 Codex 改用
-          // agents 目录自动发现后已无作用，交由用户按指引手动移除。
-          manualCleanup.push(entry.path);
-        } else {
-          if (modified && !this.force) {
-            throw new Error(
-              "File was modified after installation; preserving user edits (use --force to remove).",
-            );
+          // 卸载器永不写入或删除用户配置：只需探测其是否存在（不跟随符号链接、不读取内容），
+          // 存在时放入 manualCleanup 交由用户按指引手动移除。
+          try {
+            fs.lstatSync(path.join(baseDir, LEGACY_SHARED_CONFIG));
+            manualCleanup.push(entry.path);
+          } catch (err) {
+            const code = (err as NodeJS.ErrnoException).code;
+            if (code !== "ENOENT" && code !== "ENOTDIR") {
+              throw err;
+            }
           }
-          if (!this.dryRun) {
-            resolveManagedPath(baseDir, entry.path);
-            fs.unlinkSync(fullPath);
-            // 清理同目录下遗留的该受管文件 .tmp.* 孤儿文件，防止阻碍父目录空目录清理
-            try {
-              const parentDir = path.dirname(fullPath);
-              const baseName = path.basename(fullPath);
-              for (const file of fs.readdirSync(parentDir)) {
-                if (file.startsWith(`${baseName}.tmp.`)) {
-                  try {
-                    fs.unlinkSync(path.join(parentDir, file));
-                  } catch {}
-                }
-              }
-            } catch {}
-          }
-          removedFiles.push(entry.path);
-          if (!this.dryRun) this.cleanEmptyParentDirs(fullPath, baseDir);
+          continue;
         }
+        const fullPath = resolveManagedPath(baseDir, entry.path);
+        let stat: fs.Stats;
+        try {
+          stat = fs.lstatSync(fullPath);
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
+          throw err;
+        }
+        if (stat.isSymbolicLink()) {
+          throw new Error(`Refusing symbolic link in managed path: ${entry.path}`);
+        }
+        if (!stat.isFile()) {
+          throw new Error(
+            "Target path exists on disk as a directory or non-regular file; remove it manually.",
+          );
+        }
+        const content = fs.readFileSync(fullPath, "utf-8");
+        const modified = ManifestManager.computeHash(content) !== entry.hash;
+        if (modified && !this.force) {
+          throw new Error(
+            "File was modified after installation; preserving user edits (use --force to remove).",
+          );
+        }
+        if (!this.dryRun) {
+          resolveManagedPath(baseDir, entry.path);
+          fs.unlinkSync(fullPath);
+          // 清理同目录下遗留的该受管文件 .tmp.* 孤儿文件，防止阻碍父目录空目录清理
+          try {
+            const parentDir = path.dirname(fullPath);
+            const baseName = path.basename(fullPath);
+            for (const file of fs.readdirSync(parentDir)) {
+              if (file.startsWith(`${baseName}.tmp.`)) {
+                try {
+                  fs.unlinkSync(path.join(parentDir, file));
+                } catch {}
+              }
+            }
+          } catch {}
+        }
+        removedFiles.push(entry.path);
+        if (!this.dryRun) this.cleanEmptyParentDirs(fullPath, baseDir);
       } catch (error) {
         skippedFiles.push(entry.path);
         errors.push(`Cannot remove '${entry.path}': ${(error as Error).message}`);
