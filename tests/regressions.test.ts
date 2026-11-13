@@ -261,6 +261,36 @@ describe("Review safety regressions", () => {
     expect(fs.readFileSync(config, "utf-8")).toBe(original);
   });
 
+  it.skipIf(!canSymlink)(
+    "reports a symlinked legacy shared config for manual cleanup without reading or deleting it",
+    () => {
+      const outside = path.join(root, "outside-config.toml");
+      fs.writeFileSync(outside, 'model = "dotfile-symlink"\n');
+      new Installer({ homeDir: root, platform: "codex" }).execute();
+      const config = path.join(root, ".codex/config.toml");
+      fs.mkdirSync(path.dirname(config), { recursive: true });
+      fs.symlinkSync(outside, config);
+
+      const manifest = ManifestManager.load(root);
+      expect(manifest).not.toBeNull();
+      if (!manifest) return;
+      manifest.files.push({
+        path: ".codex/config.toml",
+        hash: "b".repeat(64),
+        platform: "codex",
+        installedAt: manifest.installedAt,
+      });
+      ManifestManager.save(root, manifest);
+
+      const result = new Uninstaller({ homeDir: root }).execute();
+      expect(result.success).toBe(true);
+      expect(result.errors).toEqual([]);
+      expect(result.manualCleanup).toContain(".codex/config.toml");
+      expect(fs.lstatSync(config).isSymbolicLink()).toBe(true);
+      expect(fs.readFileSync(outside, "utf-8")).toBe('model = "dotfile-symlink"\n');
+    },
+  );
+
   it("blocks traversal and unrecognized paths in an otherwise valid manifest", () => {
     new Installer({ homeDir: repo, platform: "claude-code" }).execute();
     const outside = path.join(root, "outside.txt");

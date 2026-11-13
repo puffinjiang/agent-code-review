@@ -3,16 +3,20 @@ export interface TemplateFile {
   sourceContent: string;
 }
 
-export type SupportedPlatform = "antigravity" | "codex" | "claude-code" | "all";
+export const PLATFORM_IDS = ["antigravity", "claude-code", "codex"] as const;
+
+export type PlatformId = (typeof PLATFORM_IDS)[number];
+
+export type SupportedPlatform = PlatformId | "all";
 
 export interface PlatformMetadata {
-  id: "antigravity" | "codex" | "claude-code";
+  id: PlatformId;
   name: string;
   verified: boolean;
   notes?: string;
 }
 
-export const PLATFORMS: Record<"antigravity" | "codex" | "claude-code", PlatformMetadata> = {
+export const PLATFORMS: Record<PlatformId, PlatformMetadata> = {
   antigravity: {
     id: "antigravity",
     name: "Google Antigravity",

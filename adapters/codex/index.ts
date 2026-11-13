@@ -2,12 +2,12 @@ import * as path from "node:path";
 import { loadCanonicalPrompt, loadCanonicalSkill } from "../assets-root.js";
 import { toPosixRelativePath } from "../normalize-path.js";
 import { renderCodexAgent, renderCodexSkill } from "../render.js";
-import { type AdapterOptions, REVIEWER_ROLES, type TemplateFile } from "../types.js";
+import { type AdapterOptions, PLATFORMS, REVIEWER_ROLES, type TemplateFile } from "../types.js";
 
 export class CodexAdapter {
   public static readonly platformId = "codex";
   public static readonly platformName = "OpenAI Codex";
-  public static readonly verified = false;
+  public static readonly verified = PLATFORMS.codex.verified;
 
   public static getTemplateFiles(options: AdapterOptions = {}): TemplateFile[] {
     const assetsRoot = options.assetsRootDir || options.templateRootDir;

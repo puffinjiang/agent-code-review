@@ -5,8 +5,15 @@ import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import { buildSync } from "esbuild";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+  AntigravityAdapter,
+  ClaudeCodeAdapter,
+  CodexAdapter,
+  PLATFORMS,
+} from "../adapters/index.js";
 import { Doctor } from "../src/lib/doctor.js";
 import { Installer } from "../src/lib/installer.js";
+import { ProcessLock } from "../src/lib/lock.js";
 import { ManifestManager } from "../src/lib/manifest.js";
 import { Uninstaller } from "../src/lib/uninstaller.js";
 
@@ -101,7 +108,7 @@ describe("Global First Installer Lifecycle", () => {
     expect(fs.existsSync(path.join(tempHome, ".codex/config.toml"))).toBe(false);
   });
 
-  it("should be idempotent when re-run globally and bypass lock on fast path", () => {
+  it("should be idempotent when re-run globally without modifying files", () => {
     const installer = new Installer({
       homeDir: tempHome,
       workspaceRoot: tempWorkspace,
@@ -111,16 +118,17 @@ describe("Global First Installer Lifecycle", () => {
     const result1 = installer.execute();
     expect(result1.success).toBe(true);
 
-    // Re-run without --force: triggers Fast Path (A) without acquiring lock
+    // Re-run without --force: evaluates alreadyUpToDate safely inside ProcessLock
     const result2 = installer.execute();
     expect(result2.success).toBe(true);
     expect(result2.alreadyUpToDate).toBe(true);
+    expect(result2.manifestSaved).toBe(false);
     for (const item of result2.items) {
       expect(item.action).toBe("skip-identical");
     }
   });
 
-  it("should not skip via fast-path if manifest.files is missing planned files, and should heal manifest (BUG-2)", () => {
+  it("should not skip as alreadyUpToDate if manifest.files is missing planned files, and should heal manifest (BUG-2)", () => {
     // 1. Initial install for antigravity
     new Installer({ homeDir: tempHome, platform: "antigravity" }).execute();
 
@@ -213,7 +221,7 @@ describe("Global First Installer Lifecycle", () => {
     expect(gitStatus).not.toContain(".tmp.");
   });
 
-  it("should purge stale .tmp files older than 1 hour even on fast-path alreadyUpToDate and upon uninstall (Issue 1)", () => {
+  it("should purge stale .tmp files older than 1 hour on alreadyUpToDate and upon uninstall (Issue 1)", () => {
     // 1. Initial installation
     const initRes = new Installer({ homeDir: tempHome, platform: "claude-code" }).execute();
     expect(initRes.success).toBe(true);
@@ -230,10 +238,10 @@ describe("Global First Installer Lifecycle", () => {
     const freshTmp = path.join(parentDir, "SKILL.md.tmp.2222.bbbb");
     fs.writeFileSync(freshTmp, "fresh content");
 
-    // 3. Fast-path alreadyUpToDate installation should purge staleTmp without writing any files
-    const fastRes = new Installer({ homeDir: tempHome, platform: "claude-code" }).execute();
-    expect(fastRes.success).toBe(true);
-    expect(fastRes.alreadyUpToDate).toBe(true);
+    // 3. Locked alreadyUpToDate installation should purge staleTmp without writing any files
+    const upToDateRes = new Installer({ homeDir: tempHome, platform: "claude-code" }).execute();
+    expect(upToDateRes.success).toBe(true);
+    expect(upToDateRes.alreadyUpToDate).toBe(true);
     expect(fs.existsSync(staleTmp)).toBe(false);
     expect(fs.existsSync(freshTmp)).toBe(true);
 
@@ -322,6 +330,9 @@ describe("Global First Installer Lifecycle", () => {
     expect(report.platformVerification.antigravity.verified).toBe(true);
     expect(report.platformVerification.codex.verified).toBe(true);
     expect(report.platformVerification["claude-code"].verified).toBe(true);
+    expect(AntigravityAdapter.verified).toBe(PLATFORMS.antigravity.verified);
+    expect(ClaudeCodeAdapter.verified).toBe(PLATFORMS["claude-code"].verified);
+    expect(CodexAdapter.verified).toBe(PLATFORMS.codex.verified);
   });
 
   it("should safely merge manifest records when multiple platforms are installed concurrently across processes (D-13 / D-14)", async () => {
@@ -450,5 +461,179 @@ describe("Global First Installer Lifecycle", () => {
     } finally {
       Installer.writeAtomic = originalWriteAtomic;
     }
+  });
+
+  it("should handle a managed path replaced by a directory cleanly without EISDIR crash in installer and uninstaller", () => {
+    const targetDir = path.join(tempHome, ".claude/skills/code-review/SKILL.md");
+    fs.mkdirSync(targetDir, { recursive: true });
+
+    const dryRes = new Installer({
+      homeDir: tempHome,
+      platform: "claude-code",
+      dryRun: true,
+    }).execute();
+    expect(dryRes.success).toBe(false);
+    expect(dryRes.items.find((i) => i.action === "conflict")?.reason).toContain(
+      "directory or non-regular file",
+    );
+
+    const forceRes = new Installer({
+      homeDir: tempHome,
+      platform: "claude-code",
+      force: true,
+    }).execute();
+    expect(forceRes.success).toBe(false);
+    expect(fs.statSync(targetDir).isDirectory()).toBe(true);
+    expect(fs.existsSync(path.join(tempHome, ".claude/agents/correctness-reviewer.md"))).toBe(
+      false,
+    );
+
+    // Also cover uninstaller when a managed file on an existing install becomes a directory
+    const cleanHome = fs.mkdtempSync(path.join(os.tmpdir(), "acr-dir-uninstall-"));
+    try {
+      expect(new Installer({ homeDir: cleanHome, platform: "claude-code" }).execute().success).toBe(
+        true,
+      );
+      const installedSkill = path.join(cleanHome, ".claude/skills/code-review/SKILL.md");
+      fs.unlinkSync(installedSkill);
+      fs.mkdirSync(installedSkill);
+
+      const unRes = new Uninstaller({ homeDir: cleanHome, force: true }).execute();
+      expect(unRes.success).toBe(false);
+      expect(unRes.skippedFiles).toContain(".claude/skills/code-review/SKILL.md");
+      expect(unRes.errors[0]).toContain("directory or non-regular file");
+      expect(fs.statSync(installedSkill).isDirectory()).toBe(true);
+    } finally {
+      fs.rmSync(cleanHome, { recursive: true, force: true });
+    }
+  });
+
+  it("should require an existing manifest with valid platforms when updateExisting is enabled", () => {
+    for (const opts of [
+      { homeDir: tempHome, updateExisting: true },
+      { homeDir: tempHome, updateExisting: true, force: true },
+      { homeDir: tempHome, updateExisting: true, dryRun: true },
+      { homeDir: tempHome, platform: "codex" as const, updateExisting: true },
+    ]) {
+      const res = new Installer(opts).execute();
+      expect(res.success).toBe(false);
+      expect(res.manifestSaved).toBe(false);
+      expect(res.errors[0]).toContain("No global Agent Code Review installation found");
+      expect(fs.existsSync(path.join(tempHome, ".agent-code-review.json"))).toBe(false);
+    }
+
+    // 存在但 platforms 不含受支持平台时，也应结构化失败
+    ManifestManager.save(tempHome, {
+      schemaVersion: "1.0.0",
+      packageVersion: "0.3.3",
+      scope: "global",
+      platforms: ["unknown-host"],
+      installedAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      files: [],
+    });
+
+    const invalidManifestRes = new Installer({
+      homeDir: tempHome,
+      updateExisting: true,
+    }).execute();
+    expect(invalidManifestRes.success).toBe(false);
+    expect(invalidManifestRes.errors[0]).toContain("does not record any supported platforms");
+  });
+
+  it("should wait for ProcessLock instead of observing uncommitted writes prior to rollback in install, dryRun, and doctor", async () => {
+    expect(new Installer({ homeDir: tempHome, platform: "codex" }).execute().success).toBe(true);
+
+    const agentPath = path.join(tempHome, ".codex/agents/correctness-reviewer.toml");
+    const officialContent = fs.readFileSync(agentPath, "utf-8");
+    const userContent = `${officialContent}\n# user customization\n`;
+    fs.writeFileSync(agentPath, userContent, "utf-8");
+
+    const bundlePath = path.join(tempWorkspace, "reader-worker.mjs");
+    buildSync({
+      entryPoints: [path.resolve("src/index.ts")],
+      outfile: bundlePath,
+      bundle: true,
+      platform: "node",
+      format: "esm",
+    });
+
+    const assetsRoot = path.resolve("assets");
+    const runLockedChildInspection = async (scriptBody: string) => {
+      const release = ProcessLock.acquire(tempHome);
+      let childPromise: Promise<Record<string, unknown>>;
+      try {
+        // 模拟并发写者在锁内暂写新内容，随后失败并回滚到 userContent
+        fs.writeFileSync(agentPath, officialContent, "utf-8");
+        childPromise = new Promise((resolve, reject) => {
+          execFile(
+            process.execPath,
+            ["--input-type=module", "-e", scriptBody],
+            (err, stdout, stderr) => {
+              if (err) return reject(new Error(stderr || err.message));
+              resolve(JSON.parse(stdout) as Record<string, unknown>);
+            },
+          );
+        });
+
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        // 模拟写者失败回滚后再释放锁
+        fs.writeFileSync(agentPath, userContent, "utf-8");
+      } finally {
+        release();
+      }
+      return childPromise;
+    };
+
+    const bundleHref = JSON.stringify(pathToFileURL(bundlePath).href);
+    const homeLiteral = JSON.stringify(tempHome);
+    const workspaceLiteral = JSON.stringify(tempWorkspace);
+    const assetsLiteral = JSON.stringify(assetsRoot);
+
+    // 1. 常规 install 等待锁（conc-002）
+    const installRes = await runLockedChildInspection(`
+      import { Installer } from ${bundleHref};
+      const res = new Installer({
+        homeDir: ${homeLiteral},
+        scope: "global",
+        platform: "codex",
+        templateDir: ${assetsLiteral},
+      }).execute();
+      process.stdout.write(JSON.stringify({ success: res.success, alreadyUpToDate: res.alreadyUpToDate }));
+    `);
+    expect(installRes.success).toBe(false);
+    expect(installRes.alreadyUpToDate).toBeFalsy();
+
+    // 2. --dry-run 预览校验也必须等待同一把锁
+    const dryRes = await runLockedChildInspection(`
+      import { Installer } from ${bundleHref};
+      const res = new Installer({
+        homeDir: ${homeLiteral},
+        scope: "global",
+        platform: "codex",
+        dryRun: true,
+        templateDir: ${assetsLiteral},
+      }).execute();
+      process.stdout.write(JSON.stringify({ success: res.success, dryRun: res.dryRun }));
+    `);
+    expect(dryRes.success).toBe(false);
+    expect(dryRes.dryRun).toBe(true);
+
+    // 3. Doctor.diagnose 完整性校验也必须等待同一把锁
+    const doctorRes = await runLockedChildInspection(`
+      import { Doctor } from ${bundleHref};
+      const report = Doctor.diagnose({
+        homeDir: ${homeLiteral},
+        workspaceRoot: ${workspaceLiteral},
+      });
+      const integrity = report.checks.find((c) => c.name === "Global Files Integrity");
+      process.stdout.write(JSON.stringify({ integrityStatus: integrity?.status }));
+    `);
+    expect(doctorRes.integrityStatus).toBe("warn");
+    expect(fs.readFileSync(agentPath, "utf-8")).toBe(userContent);
+
+    // 4. homeDir === workspaceRoot 时 Doctor.diagnose 串行加锁不得自死锁
+    const sameDirReport = Doctor.diagnose({ homeDir: tempHome, workspaceRoot: tempHome });
+    expect(sameDirReport.overallHealthy).toBe(true);
   });
 });

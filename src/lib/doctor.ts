@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { PLATFORMS, type PlatformMetadata } from "../../adapters/index.js";
 import { GitScopeResolver } from "../../core/git/scope.js";
 import { type DetectedPlatform, detectPlatforms } from "./detect-platform.js";
+import { ProcessLock } from "./lock.js";
 import { resolveManagedPath } from "./managed-path.js";
 import { type InstallationManifest, ManifestManager } from "./manifest.js";
 
@@ -25,6 +26,141 @@ export interface DoctorReport {
 }
 
 export class Doctor {
+  private static verifyScopeIntegrity(
+    baseDir: string,
+    manifest: InstallationManifest,
+    scope: "global" | "local",
+  ): { check: DoctorCheckResult; healthy: boolean } {
+    const integrityName = scope === "global" ? "Global Files Integrity" : "Local Files Integrity";
+    let missing = 0;
+    let modified = 0;
+
+    for (const entry of manifest.files) {
+      let full: string;
+      try {
+        full = resolveManagedPath(baseDir, entry.path);
+      } catch {
+        missing++;
+        continue;
+      }
+      try {
+        const stat = fs.lstatSync(full);
+        if (!stat.isFile()) {
+          // 被替换成了目录或特殊文件类型（V-10）
+          modified++;
+        } else {
+          const currentHash = ManifestManager.computeHash(fs.readFileSync(full, "utf-8"));
+          if (currentHash !== entry.hash) {
+            modified++;
+          }
+        }
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === "ENOENT") {
+          missing++;
+        } else {
+          // EISDIR, EACCES 或其他读取异常，优雅归类为 modified/abnormal 而非直接抛出堆栈崩溃
+          modified++;
+        }
+      }
+    }
+
+    if (missing > 0) {
+      return {
+        healthy: false,
+        check: {
+          name: integrityName,
+          status: "fail",
+          message: `${missing} ${scope} managed file(s) are missing on disk.`,
+        },
+      };
+    }
+    if (modified > 0) {
+      return {
+        healthy: true,
+        check: {
+          name: integrityName,
+          status: "warn",
+          message: `${modified} ${scope} managed file(s) have local user customizations or non-file entries.`,
+        },
+      };
+    }
+    return {
+      healthy: true,
+      check: {
+        name: integrityName,
+        status: "pass",
+        message: `All ${manifest.files.length} ${scope} files match installation hashes.`,
+      },
+    };
+  }
+
+  private static inspectScopeLocked(
+    baseDir: string,
+    scope: "global" | "local",
+  ): {
+    manifest: InstallationManifest | null;
+    checks: DoctorCheckResult[];
+    healthy: boolean;
+  } {
+    const installCheckName =
+      scope === "global" ? "Global Installation" : "Local Project Installation";
+    try {
+      return ProcessLock.withInspectionLock(baseDir, () => {
+        const manifest = ManifestManager.load(baseDir);
+        if (!manifest) {
+          if (scope === "global") {
+            return {
+              manifest: null,
+              healthy: true,
+              checks: [
+                {
+                  name: installCheckName,
+                  status: "warn",
+                  message:
+                    "No global configuration found at ~/.agent-code-review.json. Run 'npx agent-code-review init' to install globally.",
+                },
+              ],
+            };
+          }
+          return { manifest: null, healthy: true, checks: [] };
+        }
+
+        const platforms = Array.isArray(manifest.platforms)
+          ? manifest.platforms.join(", ")
+          : (manifest as { platform?: string }).platform || "antigravity";
+
+        const installCheck: DoctorCheckResult = {
+          name: installCheckName,
+          status: "pass",
+          message:
+            scope === "global"
+              ? `Global configuration active for [${platforms}] (version ${manifest.packageVersion}).`
+              : `Project-level configuration present in workspace for [${platforms}].`,
+        };
+
+        const integrity = this.verifyScopeIntegrity(baseDir, manifest, scope);
+        return {
+          manifest,
+          healthy: integrity.healthy,
+          checks: [installCheck, integrity.check],
+        };
+      });
+    } catch (error) {
+      return {
+        manifest: null,
+        healthy: false,
+        checks: [
+          {
+            name: installCheckName,
+            status: "fail",
+            message: (error as Error).message,
+          },
+        ],
+      };
+    }
+  }
+
   public static diagnose(options: { workspaceRoot?: string; homeDir?: string } = {}): DoctorReport {
     const workspaceRoot = path.resolve(options.workspaceRoot || process.cwd());
     const homeDir = path.resolve(options.homeDir || os.homedir());
@@ -69,157 +205,31 @@ export class Doctor {
       message: header + verificationDetails,
     });
 
-    // Check 3: Global Installation Manifest
-    const globalManifest = ManifestManager.load(homeDir);
-    if (globalManifest) {
-      const globalPlatforms = Array.isArray(globalManifest.platforms)
-        ? globalManifest.platforms.join(", ")
-        : (globalManifest as any).platform || "antigravity";
-
-      checks.push({
-        name: "Global Installation",
-        status: "pass",
-        message: `Global configuration active for [${globalPlatforms}] (version ${globalManifest.packageVersion}).`,
-      });
-
-      // Verify global files (V-10 修复：对目录、损坏符号链接及权限异常做安全防护，防止 EISDIR 崩溃)
-      let missing = 0;
-      let modified = 0;
-      for (const entry of globalManifest.files) {
-        let full: string;
-        try {
-          full = resolveManagedPath(homeDir, entry.path);
-        } catch {
-          missing++;
-          continue;
-        }
-        try {
-          const stat = fs.lstatSync(full);
-          if (!stat.isFile()) {
-            // 被替换成了目录或特殊文件类型
-            modified++;
-          } else {
-            const currentHash = ManifestManager.computeHash(fs.readFileSync(full, "utf-8"));
-            if (currentHash !== entry.hash) {
-              modified++;
-            }
-          }
-        } catch (error) {
-          const code = (error as NodeJS.ErrnoException).code;
-          if (code === "ENOENT") {
-            missing++;
-          } else {
-            // EISDIR, EACCES 或其他读取异常，优雅归类为 modified/abnormal 而非直接抛出堆栈崩溃
-            modified++;
-          }
-        }
-      }
-
-      if (missing > 0) {
-        overallHealthy = false;
-        checks.push({
-          name: "Global Files Integrity",
-          status: "fail",
-          message: `${missing} global managed file(s) are missing on disk.`,
-        });
-      } else if (modified > 0) {
-        checks.push({
-          name: "Global Files Integrity",
-          status: "warn",
-          message: `${modified} global managed file(s) have local user customizations or non-file entries.`,
-        });
-      } else {
-        checks.push({
-          name: "Global Files Integrity",
-          status: "pass",
-          message: `All ${globalManifest.files.length} global files match installation hashes.`,
-        });
-      }
-    } else {
-      checks.push({
-        name: "Global Installation",
-        status: "warn",
-        message:
-          "No global configuration found at ~/.agent-code-review.json. Run 'npx agent-code-review init' to install globally.",
-      });
+    // Check 3 & 4: 串行持有各自目录的同一把 ProcessLock 完成安装清单与文件完整性核验，
+    // 防止在并发安装回滚尚未结束时读到半提交状态（且不嵌套锁以避免 homeDir === workspaceRoot 死锁）
+    const globalResult = this.inspectScopeLocked(homeDir, "global");
+    const globalManifest = globalResult.manifest;
+    checks.push(...globalResult.checks);
+    if (!globalResult.healthy) {
+      overallHealthy = false;
     }
 
-    // Check 4: Local Workspace Configuration
     const gitResolver = new GitScopeResolver(workspaceRoot);
     const isGit = gitResolver.isGitRepo();
-    const localManifest = ManifestManager.load(workspaceRoot);
+    const localResult = this.inspectScopeLocked(workspaceRoot, "local");
+    const localManifest = localResult.manifest;
+    checks.push(...localResult.checks);
+    if (!localResult.healthy) {
+      overallHealthy = false;
+    }
 
-    if (localManifest) {
-      const localPlatforms = Array.isArray(localManifest.platforms)
-        ? localManifest.platforms.join(", ")
-        : (localManifest as any).platform || "antigravity";
-
+    if (localManifest && globalManifest) {
       checks.push({
-        name: "Local Project Installation",
-        status: "pass",
-        message: `Project-level configuration present in workspace for [${localPlatforms}].`,
+        name: "Configuration Precedence",
+        status: "warn",
+        message:
+          "Local workspace configuration is present and will override global Agent Review settings for this project.",
       });
-
-      // Verify local files integrity (V-10 防护)
-      let localMissing = 0;
-      let localModified = 0;
-      for (const entry of localManifest.files) {
-        let full: string;
-        try {
-          full = resolveManagedPath(workspaceRoot, entry.path);
-        } catch {
-          localMissing++;
-          continue;
-        }
-        try {
-          const stat = fs.lstatSync(full);
-          if (!stat.isFile()) {
-            localModified++;
-          } else {
-            const currentHash = ManifestManager.computeHash(fs.readFileSync(full, "utf-8"));
-            if (currentHash !== entry.hash) {
-              localModified++;
-            }
-          }
-        } catch (error) {
-          const code = (error as NodeJS.ErrnoException).code;
-          if (code === "ENOENT") {
-            localMissing++;
-          } else {
-            localModified++;
-          }
-        }
-      }
-
-      if (localMissing > 0) {
-        overallHealthy = false;
-        checks.push({
-          name: "Local Files Integrity",
-          status: "fail",
-          message: `${localMissing} local managed file(s) are missing on disk.`,
-        });
-      } else if (localModified > 0) {
-        checks.push({
-          name: "Local Files Integrity",
-          status: "warn",
-          message: `${localModified} local managed file(s) have local user customizations or non-file entries.`,
-        });
-      } else {
-        checks.push({
-          name: "Local Files Integrity",
-          status: "pass",
-          message: `All ${localManifest.files.length} local files match installation hashes.`,
-        });
-      }
-
-      if (globalManifest) {
-        checks.push({
-          name: "Configuration Precedence",
-          status: "warn",
-          message:
-            "Local workspace configuration is present and will override global Agent Review settings for this project.",
-        });
-      }
     }
 
     if (isGit) {

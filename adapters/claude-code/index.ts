@@ -2,12 +2,12 @@ import * as path from "node:path";
 import { loadCanonicalPrompt, loadCanonicalSkill } from "../assets-root.js";
 import { toPosixRelativePath } from "../normalize-path.js";
 import { renderClaudeAgent, renderClaudeSkill } from "../render.js";
-import { type AdapterOptions, REVIEWER_ROLES, type TemplateFile } from "../types.js";
+import { type AdapterOptions, PLATFORMS, REVIEWER_ROLES, type TemplateFile } from "../types.js";
 
 export class ClaudeCodeAdapter {
   public static readonly platformId = "claude-code";
   public static readonly platformName = "Claude Code";
-  public static readonly verified = false;
+  public static readonly verified = PLATFORMS["claude-code"].verified;
 
   public static getTemplateFiles(options: AdapterOptions = {}): TemplateFile[] {
     const assetsRoot = options.assetsRootDir || options.templateRootDir;
