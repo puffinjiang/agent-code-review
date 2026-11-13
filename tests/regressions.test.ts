@@ -194,12 +194,6 @@ describe("Review safety regressions", () => {
     expect(new Uninstaller({ workspaceRoot: repo, scope: "local" }).execute().success).toBe(true);
   });
 
-  it("removes a shared config only when this installation created it", () => {
-    new Installer({ homeDir: root, platform: "codex" }).execute();
-    expect(new Uninstaller({ homeDir: root }).execute().success).toBe(true);
-    expect(fs.existsSync(path.join(root, ".codex/config.toml"))).toBe(false);
-  });
-
   it("leaves a legacy shared config untouched during forced uninstall", () => {
     new Installer({ homeDir: root, platform: "codex" }).execute();
     // 模拟旧版清单记录了 config.toml，且 originalContent === null

@@ -294,28 +294,29 @@ describe("ProcessLock Unit Tests", () => {
     expect(fs.existsSync(lockPath)).toBe(false);
   });
 
-  it("should report exact EACCES error and remediation guidance when lock directory is unreadable (mode 000) (O-3)", () => {
-    if (process.platform === "win32") return;
+  it.skipIf(process.platform === "win32")(
+    "should report exact EACCES error and remediation guidance when lock directory is unreadable (mode 000) (O-3)",
+    () => {
+      const lockPath = ProcessLock.getLockPath(tempDir);
+      createDirLock(lockPath, { pid: process.pid, token: "secret", time: Date.now() });
+      fs.chmodSync(lockPath, 0o000);
 
-    const lockPath = ProcessLock.getLockPath(tempDir);
-    createDirLock(lockPath, { pid: process.pid, token: "secret", time: Date.now() });
-    fs.chmodSync(lockPath, 0o000);
-
-    try {
       try {
-        ProcessLock.acquire(tempDir, { timeoutMs: 200 });
-        expect.unreachable("should have thrown");
-      } catch (err: unknown) {
-        expect((err as NodeJS.ErrnoException).code).toBe("EACCES");
-        expect((err as Error).message).toMatch(/无法读取安装锁目录（权限不足\/EACCES）/);
-        expect((err as Error).message).toMatch(/rm/);
+        try {
+          ProcessLock.acquire(tempDir, { timeoutMs: 200 });
+          expect.unreachable("should have thrown");
+        } catch (err: unknown) {
+          expect((err as NodeJS.ErrnoException).code).toBe("EACCES");
+          expect((err as Error).message).toMatch(/无法读取安装锁目录（权限不足\/EACCES）/);
+          expect((err as Error).message).toMatch(/rm/);
+        }
+      } finally {
+        try {
+          fs.chmodSync(lockPath, 0o755);
+        } catch {}
       }
-    } finally {
-      try {
-        fs.chmodSync(lockPath, 0o755);
-      } catch {}
-    }
-  });
+    },
+  );
 
   it("should safely leave lock untouched if token changed before reclaim (O-2)", () => {
     const lockPath = ProcessLock.getLockPath(tempDir);
@@ -378,14 +379,12 @@ describe("ProcessLock Unit Tests", () => {
   });
 
   it("should preserve timeout error message with PID info (C-2)", () => {
-    if (process.platform === "win32") return;
-
     const lockPath = ProcessLock.getLockPath(tempDir);
     createDirLock(lockPath, { pid: process.pid, token: "other", time: Date.now() });
 
     try {
       expect(() => ProcessLock.acquire(tempDir, { timeoutMs: 100, retryIntervalMs: 20 })).toThrow(
-        /获取安装锁超时/,
+        new RegExp(`获取安装锁超时.*PID: ${process.pid}`),
       );
     } finally {
       try {
