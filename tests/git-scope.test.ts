@@ -173,7 +173,7 @@ describe("Git Scope Resolver", () => {
     const resolver = new GitScopeResolver(tempDir);
     const largeFilePath = path.join(tempDir, "large-untracked.txt");
     // Write 2 MB of text
-    fs.writeFileSync(largeFilePath, "a".repeat(2 * 1024 * 1024) + "\n");
+    fs.writeFileSync(largeFilePath, `${"a".repeat(2 * 1024 * 1024)}\n`);
 
     const result = resolver.resolve({
       target: "uncommitted",
@@ -190,9 +190,9 @@ describe("Git Scope Resolver", () => {
   it("should enforce total untracked patch size cap across multiple files (V-8)", () => {
     const resolver = new GitScopeResolver(tempDir);
     // Create 3 files of 400KB each
-    fs.writeFileSync(path.join(tempDir, "file1.txt"), "1".repeat(400 * 1024) + "\n");
-    fs.writeFileSync(path.join(tempDir, "file2.txt"), "2".repeat(400 * 1024) + "\n");
-    fs.writeFileSync(path.join(tempDir, "file3.txt"), "3".repeat(400 * 1024) + "\n");
+    fs.writeFileSync(path.join(tempDir, "file1.txt"), `${"1".repeat(400 * 1024)}\n`);
+    fs.writeFileSync(path.join(tempDir, "file2.txt"), `${"2".repeat(400 * 1024)}\n`);
+    fs.writeFileSync(path.join(tempDir, "file3.txt"), `${"3".repeat(400 * 1024)}\n`);
 
     const result = resolver.resolve({
       target: "uncommitted",

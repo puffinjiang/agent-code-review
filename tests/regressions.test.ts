@@ -7,8 +7,16 @@ import { getAdapter } from "../adapters/index.js";
 import { GitScopeResolver } from "../core/git/scope.js";
 import { Installer } from "../src/lib/installer.js";
 import { resolveManagedPath } from "../src/lib/managed-path.js";
-import { ManifestManager } from "../src/lib/manifest.js";
+import { type InstallationManifest, ManifestManager } from "../src/lib/manifest.js";
 import { Uninstaller } from "../src/lib/uninstaller.js";
+
+function requireManifest(baseDir: string): InstallationManifest {
+  const manifest = ManifestManager.load(baseDir);
+  if (!manifest) {
+    throw new Error(`Expected manifest at ${baseDir}`);
+  }
+  return manifest;
+}
 
 /**
  * Windows 创建符号链接需要开发者模式或管理员权限，缺失时相关用例会以 EPERM 失败。
@@ -154,7 +162,7 @@ describe("Review safety regressions", () => {
     expect(fs.existsSync(path.join(root, ".codex/agents/correctness-reviewer.toml"))).toBe(true);
 
     // 旧版清单残留的注册条目，应在重新安装时退役
-    const manifest = ManifestManager.load(root)!;
+    const manifest = requireManifest(root);
     manifest.files.push({
       path: ".codex/config.toml",
       hash: "a".repeat(64),
@@ -165,9 +173,7 @@ describe("Review safety regressions", () => {
     });
     ManifestManager.save(root, manifest);
     expect(new Installer({ homeDir: root, platform: "codex" }).execute().success).toBe(true);
-    expect(ManifestManager.load(root)!.files.map((f) => f.path)).not.toContain(
-      ".codex/config.toml",
-    );
+    expect(requireManifest(root).files.map((f) => f.path)).not.toContain(".codex/config.toml");
   });
 
   it("upgrades an older single-platform manifest without losing file ownership", () => {
@@ -177,7 +183,7 @@ describe("Review safety regressions", () => {
       platform: "antigravity" as const,
     };
     new Installer(options).execute();
-    const manifest = ManifestManager.load(repo)!;
+    const manifest = requireManifest(repo);
     fs.writeFileSync(
       ManifestManager.getManifestPath(repo),
       JSON.stringify({
@@ -198,7 +204,7 @@ describe("Review safety regressions", () => {
     new Installer({ homeDir: root, platform: "codex" }).execute();
     // 模拟旧版清单记录了 config.toml，且 originalContent === null
     // （旧语义下这意味着「由本工具创建」，会被直接删除）
-    const manifest = ManifestManager.load(root)!;
+    const manifest = requireManifest(root);
     manifest.files.push({
       path: ".codex/config.toml",
       hash: ManifestManager.computeHash("merged"),
@@ -240,7 +246,7 @@ describe("Review safety regressions", () => {
     const original = 'model = "x"\n';
     fs.writeFileSync(config, original);
     new Installer({ homeDir: root, platform: "codex" }).execute();
-    const manifest = ManifestManager.load(root)!;
+    const manifest = requireManifest(root);
     manifest.files.push({
       path: ".codex/config.toml",
       hash: ManifestManager.computeHash("merged"),
@@ -265,9 +271,7 @@ describe("Review safety regressions", () => {
       fs.mkdirSync(path.dirname(config), { recursive: true });
       fs.symlinkSync(outside, config);
 
-      const manifest = ManifestManager.load(root);
-      expect(manifest).not.toBeNull();
-      if (!manifest) return;
+      const manifest = requireManifest(root);
       manifest.files.push({
         path: ".codex/config.toml",
         hash: "b".repeat(64),
@@ -289,7 +293,7 @@ describe("Review safety regressions", () => {
     new Installer({ homeDir: repo, platform: "claude-code" }).execute();
     const outside = path.join(root, "outside.txt");
     fs.writeFileSync(outside, "known");
-    const manifest = ManifestManager.load(repo)!;
+    const manifest = requireManifest(repo);
     manifest.files = [
       {
         path: "../outside.txt",

@@ -220,7 +220,7 @@ export class GitScopeResolver {
                 if (trimmed.charCodeAt(i) === 10) lineCount++;
               }
             }
-            const addedLines = trimmed.length > 0 ? "+" + trimmed.replace(/\n/g, "\n+") : "";
+            const addedLines = trimmed.length > 0 ? `+${trimmed.replace(/\n/g, "\n+")}` : "";
 
             untrackedPatches.push(
               `diff --git ${JSON.stringify(`a/${uf}`)} ${quoted}\nnew file mode ${mode}\n--- /dev/null\n+++ ${quoted}\n${lineCount ? `@@ -0,0 +1,${lineCount} @@\n${addedLines}${endsWithNewline ? "\n" : "\n\\ No newline at end of file\n"}` : ""}`,

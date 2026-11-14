@@ -56,11 +56,13 @@ npx agent-code-review@latest uninstall --local
 
 ### Installation Target Paths
 
-| Platform               | Global Scope (`--global`, Default)                                                              | Local Scope (`--local`)                                                       |
-| :--------------------- | :---------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------- |
-| **Google Antigravity** | `~/.gemini/config/skills/code-review/SKILL.md`<br>`~/.gemini/config/agents/<reviewer>/agent.md` | `.agents/skills/code-review/SKILL.md`<br>`.agents/agents/<reviewer>/agent.md` |
-| **Claude Code**        | `~/.claude/skills/code-review/SKILL.md`<br>`~/.claude/agents/<reviewer>.md`                     | `.claude/skills/code-review/SKILL.md`<br>`.claude/agents/<reviewer>.md`       |
-| **OpenAI Codex**       | `~/.agents/skills/code-review/SKILL.md`<br>`~/.codex/agents/<reviewer>.toml`                    | `.agents/skills/code-review/SKILL.md`<br>`.codex/agents/<reviewer>.toml`      |
+| Platform               | Global Scope (`--global`, Default)                                                                                                                          | Local Scope (`--local`)                                                       |
+| :--------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------- |
+| **Google Antigravity** | `~/.gemini/config/skills/code-review/SKILL.md`<br>`~/.gemini/config/agents/<reviewer>/agent.md`<br>`~/.gemini/antigravity-cli/skills/code-review/SKILL.md`¹ | `.agents/skills/code-review/SKILL.md`<br>`.agents/agents/<reviewer>/agent.md` |
+| **Claude Code**        | `~/.claude/skills/code-review/SKILL.md`<br>`~/.claude/agents/<reviewer>.md`                                                                                 | `.claude/skills/code-review/SKILL.md`<br>`.claude/agents/<reviewer>.md`       |
+| **OpenAI Codex**       | `~/.agents/skills/code-review/SKILL.md`<br>`~/.codex/agents/<reviewer>.toml`                                                                                | `.agents/skills/code-review/SKILL.md`<br>`.codex/agents/<reviewer>.toml`      |
+
+_¹ Installed as a compatibility copy when `~/.gemini/antigravity-cli` exists._
 
 ### Safety Guarantees
 
