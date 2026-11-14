@@ -54,8 +54,7 @@ export class ManifestManager {
         }
       }
       if (
-        !manifest ||
-        manifest.schemaVersion !== "1.0.0" ||
+        manifest?.schemaVersion !== "1.0.0" ||
         !["global", "local"].includes(manifest.scope) ||
         !Array.isArray(manifest.platforms) ||
         !manifest.platforms.every((p) => typeof p === "string") ||
@@ -84,7 +83,7 @@ export class ManifestManager {
     const manifestPath = this.getManifestPath(baseDir);
     // 随机后缀保证同一进程/同一毫秒内的多次保存互不碰撞（D-14）
     const tmpPath = `${manifestPath}.tmp.${process.pid}.${crypto.randomBytes(8).toString("hex")}`;
-    const content = JSON.stringify(manifest, null, 2) + "\n";
+    const content = `${JSON.stringify(manifest, null, 2)}\n`;
 
     // 'wx' = O_CREAT | O_EXCL：路径已存在（包括预置的符号链接）时直接失败，绝不跟随
     const fd = fs.openSync(tmpPath, "wx", 0o600);

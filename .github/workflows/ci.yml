@@ -36,7 +36,7 @@ jobs:
         run: npm ci
 
       - name: Code format & lint check (Biome)
-        run: npx @biomejs/biome ci
+        run: npx @biomejs/biome ci --error-on-warnings
 
       - name: Type check
         run: npm run typecheck

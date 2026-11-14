@@ -58,11 +58,13 @@ npx agent-code-review@latest uninstall --local
 
 ### 各平台安装路径规范
 
-| 平台                   | 全局安装路径（`--global`，默认）                                                                | 项目级安装路径（`--local`）                                                   |
-| :--------------------- | :---------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------- |
-| **Google Antigravity** | `~/.gemini/config/skills/code-review/SKILL.md`<br>`~/.gemini/config/agents/<reviewer>/agent.md` | `.agents/skills/code-review/SKILL.md`<br>`.agents/agents/<reviewer>/agent.md` |
-| **Claude Code**        | `~/.claude/skills/code-review/SKILL.md`<br>`~/.claude/agents/<reviewer>.md`                     | `.claude/skills/code-review/SKILL.md`<br>`.claude/agents/<reviewer>.md`       |
-| **OpenAI Codex**       | `~/.agents/skills/code-review/SKILL.md`<br>`~/.codex/agents/<reviewer>.toml`                    | `.agents/skills/code-review/SKILL.md`<br>`.codex/agents/<reviewer>.toml`      |
+| 平台                   | 全局安装路径（`--global`，默认）                                                                                                                            | 项目级安装路径（`--local`）                                                   |
+| :--------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------- |
+| **Google Antigravity** | `~/.gemini/config/skills/code-review/SKILL.md`<br>`~/.gemini/config/agents/<reviewer>/agent.md`<br>`~/.gemini/antigravity-cli/skills/code-review/SKILL.md`¹ | `.agents/skills/code-review/SKILL.md`<br>`.agents/agents/<reviewer>/agent.md` |
+| **Claude Code**        | `~/.claude/skills/code-review/SKILL.md`<br>`~/.claude/agents/<reviewer>.md`                                                                                 | `.claude/skills/code-review/SKILL.md`<br>`.claude/agents/<reviewer>.md`       |
+| **OpenAI Codex**       | `~/.agents/skills/code-review/SKILL.md`<br>`~/.codex/agents/<reviewer>.toml`                                                                                | `.agents/skills/code-review/SKILL.md`<br>`.codex/agents/<reviewer>.toml`      |
+
+_¹ 仅在检测到 `~/.gemini/antigravity-cli` 目录时同步写入兼容副本。_
 
 ### 安装安全保障
 

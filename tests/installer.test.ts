@@ -14,8 +14,16 @@ import {
 import { Doctor } from "../src/lib/doctor.js";
 import { Installer } from "../src/lib/installer.js";
 import { ProcessLock } from "../src/lib/lock.js";
-import { ManifestManager } from "../src/lib/manifest.js";
+import { type InstallationManifest, ManifestManager } from "../src/lib/manifest.js";
 import { Uninstaller } from "../src/lib/uninstaller.js";
+
+function requireManifest(baseDir: string): InstallationManifest {
+  const manifest = ManifestManager.load(baseDir);
+  if (!manifest) {
+    throw new Error(`Expected manifest at ${baseDir}`);
+  }
+  return manifest;
+}
 
 describe("Global First Installer Lifecycle", () => {
   let tempHome: string;
@@ -137,7 +145,7 @@ describe("Global First Installer Lifecycle", () => {
 
     // 3. Simulate an incomplete/corrupted manifest where platforms contains claude-code
     // but files only contains antigravity files (e.g. legacy or partial state)
-    const originalManifest = ManifestManager.load(tempHome)!;
+    const originalManifest = requireManifest(tempHome);
     const antigravityOnlyFiles = originalManifest.files.filter((f) => f.platform === "antigravity");
     ManifestManager.save(tempHome, {
       ...originalManifest,
@@ -145,7 +153,7 @@ describe("Global First Installer Lifecycle", () => {
       files: antigravityOnlyFiles,
     });
 
-    const tamperedManifest = ManifestManager.load(tempHome)!;
+    const tamperedManifest = requireManifest(tempHome);
     expect(tamperedManifest.files.length).toBe(6);
     expect(tamperedManifest.platforms).toEqual(["antigravity", "claude-code"]);
 
@@ -158,7 +166,7 @@ describe("Global First Installer Lifecycle", () => {
     expect(result.alreadyUpToDate).toBeFalsy();
 
     // 5. Verify manifest is healed: all 12 files registered
-    const healedManifest = ManifestManager.load(tempHome)!;
+    const healedManifest = requireManifest(tempHome);
     expect(healedManifest.files.length).toBe(12);
 
     // 6. Verify uninstaller now cleans up all files without leaving orphans
@@ -377,17 +385,16 @@ describe("Global First Installer Lifecycle", () => {
     expect(resA.success).toBe(true);
     expect(resB.success).toBe(true);
 
-    const manifest = ManifestManager.load(tempHome);
-    expect(manifest).not.toBeNull();
+    const manifest = requireManifest(tempHome);
     // Both platforms must be present in manifest.platforms
-    expect(manifest?.platforms).toContain("claude-code");
-    expect(manifest?.platforms).toContain("codex");
+    expect(manifest.platforms).toContain("claude-code");
+    expect(manifest.platforms).toContain("codex");
 
     // Both platforms' files must be present (6 claude-code + 6 codex = 12 files)
-    const platformsInFiles = manifest!.files.map((f) => f.platform);
+    const platformsInFiles = manifest.files.map((f) => f.platform);
     expect(platformsInFiles).toContain("claude-code");
     expect(platformsInFiles).toContain("codex");
-    expect(manifest!.files.length).toBe(12);
+    expect(manifest.files.length).toBe(12);
 
     // Verify files on disk
     expect(fs.existsSync(path.join(tempHome, ".claude/skills/code-review/SKILL.md"))).toBe(true);

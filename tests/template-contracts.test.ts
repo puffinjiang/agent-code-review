@@ -8,7 +8,7 @@ import {
   loadCanonicalSkill,
   resolveAssetsRoot,
 } from "../adapters/assets-root.js";
-import { getAdapter, renderCodexAgent } from "../adapters/index.js";
+import { getAdapter, renderCodexAgent, type TemplateFile } from "../adapters/index.js";
 import { validateFinding } from "../src/lib/findings.js";
 
 const roles = [
@@ -19,20 +19,47 @@ const roles = [
   "findings-verifier",
 ] as const;
 
+function requireTemplateFile(
+  files: readonly TemplateFile[],
+  predicate: (file: TemplateFile) => boolean,
+  missingMessage: string,
+): TemplateFile {
+  const file = files.find(predicate);
+  if (!file) {
+    throw new Error(missingMessage);
+  }
+  return file;
+}
+
+function requireSkillContent(platform: "antigravity" | "claude-code" | "codex"): string {
+  const files = getAdapter(platform).getTemplateFiles({ isGlobal: true });
+  return requireTemplateFile(
+    files,
+    (f) => f.relativePath.endsWith("skills/code-review/SKILL.md"),
+    `未找到 ${platform} 的 SKILL.md`,
+  ).sourceContent;
+}
+
 function parseSimpleYamlFrontmatter(markdown: string): {
   fields: Record<string, string | string[]>;
   body: string;
 } {
   const match = markdown.match(/^---\n([\s\S]*?)\n---\n\n([\s\S]*)$/);
   expect(match, "Markdown 文件必须包含标准 --- 包裹的 YAML frontmatter 与正文").not.toBeNull();
-  const [, rawYaml, body] = match!;
+  if (!match) {
+    throw new Error("Markdown 文件必须包含标准 --- 包裹的 YAML frontmatter 与正文");
+  }
+  const [, rawYaml, body] = match;
   const fields: Record<string, string | string[]> = {};
   const lines = rawYaml.split("\n");
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const kv = line.match(/^([a-zA-Z0-9_-]+):\s*(.*)$/);
     expect(kv, `无法解析的 YAML 行: ${line}`).not.toBeNull();
-    const [, key, rawVal] = kv!;
+    if (!kv) {
+      throw new Error(`无法解析的 YAML 行: ${line}`);
+    }
+    const [, key, rawVal] = kv;
     if (rawVal === ">-") {
       const folded: string[] = [];
       while (i + 1 < lines.length && lines[i + 1].startsWith("  ")) {
@@ -72,10 +99,13 @@ describe("Installable reviewer contracts (SSOT dynamic rendering)", () => {
     // 无需在 config.toml 中注册。官方要求的三个字段即 name / description /
     // developer_instructions；name 是身份来源，文件名只是约定。
     const files = getAdapter("codex").getTemplateFiles();
-    const agentFile = files.find((f) => f.relativePath === `.codex/agents/${role}.toml`);
-    expect(agentFile, `缺少 Codex agent 文件: ${role}`).toBeDefined();
+    const agentFile = requireTemplateFile(
+      files,
+      (f) => f.relativePath === `.codex/agents/${role}.toml`,
+      `缺少 Codex agent 文件: ${role}`,
+    );
 
-    const agent = parse(agentFile!.sourceContent);
+    const agent = parse(agentFile.sourceContent);
     expect(agent.name).toBe(role.replaceAll("-", "_"));
     expect(agent.description).toBeTypeOf("string");
     expect(agent.developer_instructions).toBeTypeOf("string");
@@ -102,10 +132,13 @@ describe("Installable reviewer contracts (SSOT dynamic rendering)", () => {
 
   it.each(roles)("provides required Claude frontmatter: %s", (role) => {
     const files = getAdapter("claude-code").getTemplateFiles();
-    const agentFile = files.find((f) => f.relativePath === `.claude/agents/${role}.md`);
-    expect(agentFile, `缺少 Claude agent 文件: ${role}`).toBeDefined();
+    const agentFile = requireTemplateFile(
+      files,
+      (f) => f.relativePath === `.claude/agents/${role}.md`,
+      `缺少 Claude agent 文件: ${role}`,
+    );
 
-    const { fields, body } = parseSimpleYamlFrontmatter(agentFile!.sourceContent);
+    const { fields, body } = parseSimpleYamlFrontmatter(agentFile.sourceContent);
     expect(Object.keys(fields)).toEqual(["name", "description", "tools"]);
     expect(fields.name).toBe(role);
     expect(fields.description.length).toBeGreaterThan(10);
@@ -115,19 +148,21 @@ describe("Installable reviewer contracts (SSOT dynamic rendering)", () => {
 
   it.each(roles)("provides required Antigravity frontmatter: %s", (role) => {
     const globalFiles = getAdapter("antigravity").getTemplateFiles({ isGlobal: true });
-    const globalAgentFile = globalFiles.find(
+    const globalAgentFile = requireTemplateFile(
+      globalFiles,
       (f) => f.relativePath === `.gemini/config/agents/${role}/agent.md`,
+      `缺少 Antigravity 全局 agent 文件: ${role}`,
     );
-    expect(globalAgentFile, `缺少 Antigravity 全局 agent 文件: ${role}`).toBeDefined();
 
     const localFiles = getAdapter("antigravity").getTemplateFiles({ isGlobal: false });
-    const localAgentFile = localFiles.find(
+    const localAgentFile = requireTemplateFile(
+      localFiles,
       (f) => f.relativePath === `.agents/agents/${role}/agent.md`,
+      `缺少 Antigravity 本地 agent 文件: ${role}`,
     );
-    expect(localAgentFile, `缺少 Antigravity 本地 agent 文件: ${role}`).toBeDefined();
-    expect(localAgentFile!.sourceContent).toBe(globalAgentFile!.sourceContent);
+    expect(localAgentFile.sourceContent).toBe(globalAgentFile.sourceContent);
 
-    const { fields, body } = parseSimpleYamlFrontmatter(globalAgentFile!.sourceContent);
+    const { fields, body } = parseSimpleYamlFrontmatter(globalAgentFile.sourceContent);
     expect(Object.keys(fields)).toEqual(["name", "description"]);
     expect(fields.name).toBe(role);
     expect(fields.description.length).toBeGreaterThan(10);
@@ -139,14 +174,15 @@ describe("Installable reviewer contracts (SSOT dynamic rendering)", () => {
     (platform) => {
       const files = getAdapter(platform).getTemplateFiles({ isGlobal: true });
       for (const role of roles) {
-        const agentFile = files.find(
+        const agentFile = requireTemplateFile(
+          files,
           (f) =>
             f.relativePath.includes(role) &&
             (f.relativePath.endsWith(".md") || f.relativePath.endsWith(".toml")),
+          `未找到 ${platform} 的 ${role} 文件`,
         );
-        expect(agentFile, `未找到 ${platform} 的 ${role} 文件`).toBeDefined();
 
-        const raw = agentFile!.sourceContent;
+        const raw = agentFile.sourceContent;
         const instructions =
           platform === "codex" ? (parse(raw).developer_instructions as string) : raw;
         const jsonBlocks = Array.from(instructions.matchAll(/```json\n([\s\S]*?)\n```/g));
@@ -228,11 +264,7 @@ describe("Installable reviewer contracts (SSOT dynamic rendering)", () => {
   it.each(["antigravity", "claude-code", "codex"] as const)(
     "provides required %s skill frontmatter",
     (platform) => {
-      const files = getAdapter(platform).getTemplateFiles({ isGlobal: true });
-      const skillFile = files.find((f) => f.relativePath.endsWith("skills/code-review/SKILL.md"));
-      expect(skillFile, `未找到 ${platform} 的 SKILL.md`).toBeDefined();
-
-      const { fields, body } = parseSimpleYamlFrontmatter(skillFile!.sourceContent);
+      const { fields, body } = parseSimpleYamlFrontmatter(requireSkillContent(platform));
       expect(fields.name).toBe("code-review");
       expect(typeof fields.description === "string" && fields.description.length > 10).toBe(true);
       expect(body.startsWith("# Independent code review")).toBe(true);
@@ -255,11 +287,7 @@ describe("Installable reviewer contracts (SSOT dynamic rendering)", () => {
   it.each(["antigravity", "claude-code", "codex"] as const)(
     "requires actual independent dispatch and explicit degraded coverage: %s",
     (platform) => {
-      const files = getAdapter(platform).getTemplateFiles({ isGlobal: true });
-      const skillFile = files.find((f) => f.relativePath.endsWith("skills/code-review/SKILL.md"));
-      expect(skillFile, `未找到 ${platform} 的 SKILL.md`).toBeDefined();
-
-      const skill = skillFile!.sourceContent;
+      const skill = requireSkillContent(platform);
       expect(skill).toContain("Launch each selected reviewer as an independent native subagent");
       expect(skill).toContain("not as personas in one context");
       expect(skill).toContain("separate findings-verifier");
@@ -272,10 +300,7 @@ describe("Installable reviewer contracts (SSOT dynamic rendering)", () => {
   // 评审规则的事实来源是 assets/skills/code-review.md；规则本身必须按语言无关的方式覆盖。
   it("requires concurrency in standard mode regardless of language extension", () => {
     for (const platform of ["antigravity", "claude-code", "codex"] as const) {
-      const files = getAdapter(platform).getTemplateFiles({ isGlobal: true });
-      const skill = files.find((f) =>
-        f.relativePath.endsWith("skills/code-review/SKILL.md"),
-      )!.sourceContent;
+      const skill = requireSkillContent(platform);
 
       // 标准模式必须包含 correctness / security / concurrency 三者，与文件扩展名无关
       expect(skill, `${platform} 标准模式应包含 concurrency-reviewer`).toContain(
@@ -293,10 +318,7 @@ describe("Installable reviewer contracts (SSOT dynamic rendering)", () => {
 
   it("requires aggregation rules that keep distinct causes separate", () => {
     for (const platform of ["antigravity", "claude-code", "codex"] as const) {
-      const files = getAdapter(platform).getTemplateFiles({ isGlobal: true });
-      const skill = files.find((f) =>
-        f.relativePath.endsWith("skills/code-review/SKILL.md"),
-      )!.sourceContent;
+      const skill = requireSkillContent(platform);
 
       expect(skill, `${platform} 应要求按 root cause + trigger 合并`).toMatch(
         /[Mm]erge only when the root cause and trigger/,
@@ -309,10 +331,7 @@ describe("Installable reviewer contracts (SSOT dynamic rendering)", () => {
 
   it("requires adversarial verification without silently discarding candidates", () => {
     for (const platform of ["antigravity", "claude-code", "codex"] as const) {
-      const files = getAdapter(platform).getTemplateFiles({ isGlobal: true });
-      const skill = files.find((f) =>
-        f.relativePath.endsWith("skills/code-review/SKILL.md"),
-      )!.sourceContent;
+      const skill = requireSkillContent(platform);
 
       expect(skill, `${platform} 应要求独立 verifier 溯源与搜索防护机制`).toMatch(
         /Require an independent source trace and a search for guards/,
@@ -328,10 +347,7 @@ describe("Installable reviewer contracts (SSOT dynamic rendering)", () => {
 
   it("requires honest reporting with confirmed/needs_verification/rejected and P0-P3 breakdown", () => {
     for (const platform of ["antigravity", "claude-code", "codex"] as const) {
-      const files = getAdapter(platform).getTemplateFiles({ isGlobal: true });
-      const skill = files.find((f) =>
-        f.relativePath.endsWith("skills/code-review/SKILL.md"),
-      )!.sourceContent;
+      const skill = requireSkillContent(platform);
 
       expect(skill, `${platform} 应要求如实报告模式、范围、时间戳与文件数`).toMatch(
         /Report mode, scope, timestamp, reviewed file count/,
@@ -348,11 +364,7 @@ describe("Installable reviewer contracts (SSOT dynamic rendering)", () => {
   it.each(["antigravity", "claude-code", "codex"] as const)(
     "reports integrity relative to the initial working tree in %s output",
     (platform) => {
-      const skillFile = getAdapter(platform)
-        .getTemplateFiles({ isGlobal: true })
-        .find((file) => file.relativePath.endsWith("skills/code-review/SKILL.md"));
-      if (!skillFile) throw new Error(`Missing ${platform} review skill`);
-      const skill = skillFile.sourceContent;
+      const skill = requireSkillContent(platform);
       expect(skill).not.toContain("verified clean");
       expect(skill).toContain("Working Tree Before Review");
       expect(skill).toContain("Working Tree After Review");

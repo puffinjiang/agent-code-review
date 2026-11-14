@@ -88,7 +88,7 @@ for (const platform of platforms) {
 }
 
 if (problems.length > 0) {
-  console.error("❌ 资产与渲染校验失败：\n" + problems.map((p) => `  - ${p}`).join("\n"));
+  console.error(`❌ 资产与渲染校验失败：\n${problems.map((p) => `  - ${p}`).join("\n")}`);
   process.exit(1);
 }
 
